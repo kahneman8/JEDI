@@ -74,7 +74,6 @@ The Markdown report should mirror the same data with headings and bullets and ci
     response = openai.ChatCompletion.create(
         model=MODEL,
         messages=messages,
-        temperature=TEMPERATURE,
         max_tokens=MAX_TOKENS,
     )
     output = response.choices[0].message["content"]
