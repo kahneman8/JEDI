@@ -1,101 +1,112 @@
-"""daily_brief/classify_sector.py"""
-import json, re, time, openai
+import json, time, random, openai
 from openai import OpenAI
-from .config import MODEL, GICS_SECTORS, OPENAI_API_KEY
+from .config import (
+    OPENAI_API_KEY, MODEL_UTILITY, MAX_PER_BATCH,
+    HEADLINE_ONLY_FOR_UTILITY
+)
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-MAX_PER_BATCH = 12              # small batches to stay under TPM
-MAX_RETRIES   = 6               # backoff tries
-MAX_SLEEP_S   = 8.0
+# Allowed sectors must match the rest of your system
+GICS_SECTORS = {
+    "Energy", "Materials", "Industrials", "Consumer Discretionary",
+    "Consumer Staples", "Health Care", "Financials",
+    "Information Technology", "Communication Services", "Utilities", "Real Estate"
+}
 
+# Strict JSON schema for Responses API
+SECTOR_SCHEMA = {
+    "name": "sector_map",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "mapping": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "i": {"type": "integer"},
+                        "sector": {"type": "string"}
+                    },
+                    "required": ["i", "sector"],
+                    "additionalProperties": False
+                }
+            }
+        },
+        "required": ["mapping"],
+        "additionalProperties": False
+    },
+    "strict": True
+}
 
-def _backoff_chat(messages):
-    delay = 0.5
-    for _ in range(MAX_RETRIES):
+def _backoff(call, *args, **kwargs):
+    delay = 0.25
+    for _ in range(6):
         try:
-            return client.chat.completions.create(model=MODEL, messages=messages)
+            return call(*args, **kwargs)
         except openai.RateLimitError:
-            time.sleep(delay)
-            delay = min(delay * 2, MAX_SLEEP_S)
+            time.sleep(delay + random.uniform(0, 0.2))
+            delay = min(delay * 2, 6.0)
+        except Exception as e:
+            # Bubble up non-rate errors
+            raise e
+    raise RuntimeError("Rate limit: retries exhausted")
 
-
-def _safe_json_array(txt: str):
-    # pull first JSON array if extra prose slipped in
-    s, e = txt.find('['), txt.rfind(']')
-    if s != -1 and e != -1:
-        return json.loads(txt[s:e+1])
-    # last resort: basic coercion (quotes around keys if model slipped)
-    txt = re.sub(r'(\{|\s)(\w+)\s*:', r'\1"\2":', txt)
-    return json.loads(txt)
-
-
-def _single_classify(headline: str, content: str = "") -> str:
-    prompt = (
-        f"Headline: {headline}\nContent: {content[:200]}\n"
-        f"Which single GICS sector? Choose one from: {', '.join(GICS_SECTORS.keys())}.\n"
-        "Return only the sector name."
-    )
-    resp = _backoff_chat([{"role": "user", "content": prompt}])
-    if not resp:
-        return "Unknown"
-    answer = (resp.choices[0].message.content or "").strip()
-    for sector in GICS_SECTORS:
-        if sector in answer:
-            return sector
-    return "Unknown"
-
-
-def _chunks(idx_list, n):
-    for i in range(0, len(idx_list), n):
-        yield idx_list[i:i+n]
-
+def _chunks(n):
+    i = 0
+    while True:
+        yield range(i, min(i + MAX_PER_BATCH, n))
+        i += MAX_PER_BATCH
+        if i >= n:
+            break
 
 def batch_assign_sector(items: list) -> None:
+    """
+    Assigns sector in-place for items missing 'sector'. Batched Responses API with strict schema.
+    """
     if not items:
         return
 
-    # Build global index list; process in small batches to reduce token load
-    indices = list(range(len(items)))
-    for group in _chunks(indices, MAX_PER_BATCH):
-        # Prepare batch prompt with absolute indices
-        lines = [f"{i+1}. {items[i].get('headline','')}" for i in group]
+    # Identify indices to classify
+    targets = [i for i, it in enumerate(items) if not it.get("sector")]
+    if not targets:
+        return
+
+    # Build valid sector list string for prompt
+    sector_list = ", ".join(sorted(GICS_SECTORS))
+
+    for grp in _chunks(len(targets)):
+        idxs = [targets[i] for i in grp]
+        if not idxs:
+            break
+
+        # Headline-only to minimize tokens
+        lines = [f"{i+1}. {items[i].get('headline','')}" for i in idxs]
         prompt = (
-            "Assign one GICS sector to each headline below.\n"
-            f"Valid sectors: {', '.join(GICS_SECTORS.keys())}.\n"
-            "Return JSON list: [{\"i\": <absolute_index>, \"sector\": <sector>}].\n\n" +
+            "Assign one **GICS** sector to each headline.\n"
+            f"Valid sectors: {sector_list}.\n"
+            "Return JSON in {\"mapping\": [{\"i\": <absolute_index>, \"sector\": \"<name>\"}]} "
+            "where <absolute_index> is the original global index (1-based).\n\n" +
             "\n".join(lines)
         )
 
-        resp = _backoff_chat([{"role": "user", "content": prompt}])
+        # Call Responses API with strict JSON
+        resp = _backoff(
+            client.responses.create,
+            model=MODEL_UTILITY,
+            input=prompt,
+            response_format={"type": "json_schema", "json_schema": SECTOR_SCHEMA}
+        )
 
-        # If rate-limited repeatedly or other error: skip batch fallback to per-item with backoff
-        if not resp:
-            for i in group:
-                items[i]["sector"] = _single_classify(
-                    items[i].get("headline", ""), items[i].get("content", "")
-                )
-            continue
+        payload = resp.output_text
+        data = json.loads(payload)
+        for m in data["mapping"]:
+            real_idx = int(m["i"]) - 1
+            sec = m["sector"]
+            if 0 <= real_idx < len(items):
+                items[real_idx]["sector"] = sec if sec in GICS_SECTORS else "Unknown"
 
-        payload = (resp.choices[0].message.content or "").strip()
-        try:
-            mapping = _safe_json_array(payload)
-        except Exception:
-            # If JSON is malformed, try per-item with backoff (still batch-friendly)
-            for i in group:
-                items[i]["sector"] = _single_classify(
-                    items[i].get("headline", ""), items[i].get("content", "")
-                )
-            continue
-
-        # Apply mapping safely
-        for entry in mapping:
-            idx = int(entry.get("i", 0)) - 1
-            sector = entry.get("sector", "Unknown")
-            if 0 <= idx < len(items):
-                items[idx]["sector"] = sector if sector in GICS_SECTORS else "Unknown"
-
-    # Final sweep: anything still unset -> classify once
+    # Any remaining unset -> Unknown (no per-item model calls)
     for it in items:
         if not it.get("sector"):
-            it["sector"] = _single_classify(it.get("headline", ""), it.get("content", ""))
+            it["sector"] = "Unknown"
