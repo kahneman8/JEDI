@@ -1,6 +1,6 @@
 import json, time, random, openai
 from openai import OpenAI
-from .config import OPENAI_API_KEY, MODEL_UTILITY, MAX_PER_BATCH
+from .config import OPENAI_API_KEY, MODEL, MAX_PER_BATCH
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -77,7 +77,7 @@ def batch_assign_sentiment(items: list) -> None:
 
         resp = _backoff(
             client.responses.create,
-            model=MODEL_UTILITY,
+            model=MODEL,
             input=prompt,
             response_format={"type": "json_schema", "json_schema": SENT_SCHEMA}
         )
