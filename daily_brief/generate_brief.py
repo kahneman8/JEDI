@@ -1,7 +1,6 @@
-"""daily_brief/generate_brief.py"""
 import os, json
 from openai import OpenAI
-from .config import MODEL, MAX_TOKENS, OPENAI_API_KEY
+from .config import MODEL_COMPOSE, MAX_OUTPUT_TOKENS, OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -14,17 +13,9 @@ def compose_and_generate(
     emerging_themes: list,
     sentiment_indicators: dict,
 ) -> tuple:
-    """
-    Build the brief in two steps using the v1 SDK:
-      1) JSON via Responses API + json_schema (strict)
-      2) Markdown via Responses API (formatting only)
-    Returns (json_dict, markdown_string).
-    """
-    # 1) Load the same schema used for validation so the model emits strict JSON
     schema_path = os.path.join(os.path.dirname(__file__), "schema.json")
     schema = json.load(open(schema_path))
 
-    # Provide the collected data as context; the model fills any missing summaries/events
     context = {
         "date": date,
         "market_summaries": market_summaries or {},
@@ -35,8 +26,9 @@ def compose_and_generate(
         "sentiment_indicators": sentiment_indicators,
     }
 
+    # 1) JSON via strict schema
     prompt_json = (
-        "You are an equity research assistant. Using ONLY the provided context JSON, "
+        "You are an equity research assistant. Using only the provided context JSON, "
         "produce a Morning Brief that strictly matches the schema (no extra fields). "
         "If market_summaries/economic_events are empty, infer concise content from the context. "
         "Preserve all URLs so every bullet can be cited.\n\n"
@@ -44,38 +36,30 @@ def compose_and_generate(
     )
 
     r_json = client.responses.create(
-        model=MODEL,
+        model=MODEL_COMPOSE,
         input=prompt_json,
         response_format={
             "type": "json_schema",
-            "json_schema": {
-                "name": "MorningBrief",
-                "schema": schema,
-                "strict": True,
-            },
+            "json_schema": {"name": "MorningBrief", "schema": schema, "strict": True},
         },
-        max_output_tokens=MAX_TOKENS,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
     )
+    brief_json = json.loads(r_json.output_text)
 
-    json_text = r_json.output_text
-    brief_json = json.loads(json_text)
-
-    # 2) Render Markdown from the validated JSON (formatting only)
+    # 2) Markdown
     prompt_md = (
         "Format the following Morning Brief JSON into a clean Markdown report:\n"
         " - Title with date\n"
         " - Headings for Market Summaries, Economic Events, News by Sector, Watchlist Alerts, Emerging Themes\n"
-        " - Bulleted items\n"
-        " - Include source URLs at the end of each bullet as citations\n"
-        " - Do NOT output JSON; only Markdown\n\n"
+        " - Bulleted items; include source URLs at the end of each bullet\n"
+        " - Output only Markdown\n\n"
         f"{json.dumps(brief_json, ensure_ascii=False)}"
     )
 
     r_md = client.responses.create(
-        model=MODEL,
+        model=MODEL_COMPOSE,
         input=prompt_md,
-        max_output_tokens=MAX_TOKENS,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
     )
     brief_md = r_md.output_text
-
     return brief_json, brief_md
