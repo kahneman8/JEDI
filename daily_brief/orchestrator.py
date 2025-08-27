@@ -3,8 +3,7 @@ from jsonschema import validate, ValidationError
 from .fetch_news import fetch_all_news
 from .classify_sector import batch_assign_sector
 from .analyze_sentiment import batch_assign_sentiment
-from .detect_themes import check_curated_watchlist, find_dynamic_trends,
-find_emerging_themes
+from .detect_themes import check_curated_watchlist, find_dynamic_trends, find_emerging_themes
 from .generate_brief import compose_and_generate
 from .config import GICS_SECTORS
 
