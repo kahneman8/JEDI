@@ -1,23 +1,23 @@
-"""phase1_daily_brief/classify_sector.py"""
+"""daily_brief/classify_sector.py"""
 import json
-import openai
-from .config import MODEL, TEMPERATURE, GICS_SECTORS
+from openai import OpenAI
+from .config import MODEL, TEMPERATURE, GICS_SECTORS, OPENAI_API_KEY
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _single_classify(headline: str, content: str = "") -> str:
-    """
-    Fallback method to classify a single news item if batch classification fails.
-    """
     prompt = (
-        "Headline: {h}\nContent: {c}\n"
-        "Which GICS sector does this news belong to? Choose one from: {choices}."
-    ).format(h=headline, c=content[:200], choices=", ".join(GICS_SECTORS.keys()))
-    resp = openai.ChatCompletion.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=TEMPERATURE,
+        f"Headline: {headline}\nContent: {content[:200]}\n"
+        f"Which GICS sector does this news belong to? Choose one from: {', '.join(GICS_SECTORS.keys())}."
+        "\nReturn only the sector name."
     )
-    answer = resp.choices[0].message["content"].strip()
+    resp = client.chat.completions.create(
+        model=MODEL,
+        temperature=TEMPERATURE,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    answer = (resp.choices[0].message.content or "").strip()
     for sector in GICS_SECTORS:
         if sector in answer:
             return sector
@@ -25,37 +25,29 @@ def _single_classify(headline: str, content: str = "") -> str:
 
 
 def batch_assign_sector(items: list) -> None:
-    """
-    Assign a sector to each item in place. Uses one GPT-5 call for multiple items.
-    The model returns a JSON list of mappings {"i": index, "sector": sector}.
-    """
     if not items:
         return
 
-    numbered = [f"{i+1}. {it.get('headline', '')}" for i, it in enumerate(items)]
-    sector_list = ", ".join(GICS_SECTORS.keys())
+    numbered = [f"{i+1}. {it.get('headline','')}" for i, it in enumerate(items)]
     prompt = (
-        "Assign one GICS sector to each headline below. "
-        "Valid sectors: {sectors}. "
-        "Return JSON list: [{{\"i\": <index>, \"sector\": <sector>}}].\n\n"
-        "{lines}"
-    ).format(sectors=sector_list, lines="\n".join(numbered))
-
+        "Assign one GICS sector to each headline below.\n"
+        f"Valid sectors: {', '.join(GICS_SECTORS.keys())}.\n"
+        "Return JSON list: [{\"i\": <index>, \"sector\": <sector>}].\n\n"
+        + "\n".join(numbered)
+    )
     try:
-        resp = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
             temperature=TEMPERATURE,
+            messages=[{"role": "user", "content": prompt}],
         )
-        mapping = json.loads(resp.choices[0].message["content"])
+        payload = (resp.choices[0].message.content or "").strip()
+        mapping = json.loads(payload)
         for entry in mapping:
             idx = int(entry.get("i", 0)) - 1
             sector = entry.get("sector", "Unknown")
             if 0 <= idx < len(items):
-                items[idx]["sector"] = sector
+                items[idx]["sector"] = sector if sector in GICS_SECTORS else "Unknown"
     except Exception:
-        # Fallback: classify each item individually
         for it in items:
-            it["sector"] = _single_classify(
-                it.get("headline", ""), it.get("content", "")
-            )
+            it["sector"] = _single_classify(it.get("headline", ""), it.get("content", ""))
