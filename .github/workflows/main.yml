@@ -37,7 +37,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python -m phase1_daily_brief.orchestrator
+          python -m daily_brief.orchestrator
 
       - name: Upload outputs as artifact
         uses: actions/upload-artifact@v4
