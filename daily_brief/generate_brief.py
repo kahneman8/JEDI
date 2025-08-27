@@ -1,7 +1,7 @@
 """daily_brief/generate_brief.py"""
 import os, json, re
 from openai import OpenAI
-from .config import MODEL_COMPOSE, MAX_OUTPUT_TOKENS, OPENAI_API_KEY
+from .config import MODEL, MAX_OUTPUT_TOKENS, OPENAI_API_KEY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -84,7 +84,7 @@ def compose_and_generate(
         f"Context JSON:\n{json.dumps(context, ensure_ascii=False)}"
     )
     r_json = client.chat.completions.create(
-        model=MODEL_COMPOSE,
+        model=MODEL,
         messages=[
             {"role": "system", "content": system_json},
             {"role": "user", "content": user_json},
@@ -108,7 +108,7 @@ def compose_and_generate(
     )
     user_md = json.dumps(brief_json, ensure_ascii=False)
     r_md = client.chat.completions.create(
-        model=MODEL_COMPOSE,
+        model=MODEL,
         messages=[
             {"role": "system", "content": system_md},
             {"role": "user", "content": user_md},
