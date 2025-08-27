@@ -1,7 +1,10 @@
-"""phase1_daily_brief/detect_themes.py"""
-import re, json, openai
+"""daily_brief/detect_themes.py"""
+import re, json
 from collections import Counter
-from .config import (MODEL, TEMPERATURE)
+from openai import OpenAI
+from .config import OPENAI_API_KEY, MODEL_UTILITY  # <- updated
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Load the curated watchlist from a JSON file in data/
 try:
@@ -24,7 +27,6 @@ def check_curated_watchlist(items: list) -> list:
             or kw_lower in it.get("content", "").lower()
         ]
         if matches:
-            # If multiple matches, summarise the number of stories
             url = matches[0].get("url", "")
             if len(matches) == 1:
                 alerts.append(f"{kw}: {matches[0]['headline']} ({url})")
@@ -39,7 +41,8 @@ def find_dynamic_trends(items: list, top_n: int = 3) -> list:
     words already in the curated list or common stopwords. Attach a representative URL.
     """
     text_corpus = " ".join(it.get("headline", "") for it in items)
-    words = re.findall(r"\b[A-Z][a-z]{3,}\b", text_corpus)  # heuristic: capitalised words
+    words = re.findall(r"\b[A-Z][a-z]{3,}\b", text_corpus)  # heuristic
+    from collections import Counter
     freq = Counter(words)
     curated_set = {w.lower() for w in WATCHLIST_CURATED}
     common_words = {"The", "This", "That", "Market", "Global", "Today"}
@@ -49,7 +52,6 @@ def find_dynamic_trends(items: list, top_n: int = 3) -> list:
     ]
     alerts = []
     for term in trending[:top_n]:
-        # find the first article mentioning this term
         url = next((it.get("url", "") for it in items if term in it.get("headline", "")), "")
         alerts.append(f"{term}: Trending in news (mentioned {freq[term]} times) ({url})")
     return alerts
@@ -57,12 +59,12 @@ def find_dynamic_trends(items: list, top_n: int = 3) -> list:
 
 def find_emerging_themes(items: list, max_themes: int = 3) -> list:
     """
-    Use GPT-5 to propose 1–3 emerging themes from the list of headlines. Returns a
-    list of dicts: {"theme": <title>, "description": <one sentence>}.
+    Use GPT (utility model) to propose up to 3 emerging themes from the headlines.
+    Returns a list[{"theme": <title>, "description": <one sentence>}].
     """
     if not items:
         return []
-    headlines_text = "\n".join(f"- {it.get('headline', '')}" for it in items[:20])
+    headlines_text = "\n".join(f"- {it.get('headline','')}" for it in items[:20])
     prompt = (
         "Today's news headlines:\n"
         f"{headlines_text}\n\n"
@@ -71,11 +73,17 @@ def find_emerging_themes(items: list, max_themes: int = 3) -> list:
         "Return JSON: [{\"theme\": <title>, \"description\": <sentence>}]."
     )
     try:
-        resp = openai.ChatCompletion.create(
-            model=MODEL,
+        resp = client.chat.completions.create(
+            model=MODEL_UTILITY,
             messages=[{"role": "user", "content": prompt}],
         )
-        themes = json.loads(resp.choices[0].message["content"])
+        raw = (resp.choices[0].message.content or "").strip()
+        # Parse first JSON array found
+        s, e = raw.find("["), raw.rfind("]")
+        if s != -1 and e != -1:
+            themes = json.loads(raw[s:e+1])
+        else:
+            themes = []
         return themes[:max_themes]
     except Exception:
         return []
