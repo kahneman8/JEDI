@@ -2,7 +2,7 @@
 import os
 # Model selection: use GPT-5 Pro for all LLM tasks
 # Models
-MODEL_COMPOSE = "gpt-5-pro"     # final JSON+Markdown compose
+MODEL = "gpt-5-pro"     # final JSON+Markdown compose
 MODEL_UTILITY = "gpt-4o-mini"   # fast/cheap for sector & sentiment
 # Temperature 0 for deterministic outputs
 TEMPERATURE = 0
