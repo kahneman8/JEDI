@@ -74,7 +74,6 @@ def find_emerging_themes(items: list, max_themes: int = 3) -> list:
         resp = openai.ChatCompletion.create(
             model=MODEL,
             messages=[{"role": "user", "content": prompt}],
-            temperature=TEMPERATURE,
         )
         themes = json.loads(resp.choices[0].message["content"])
         return themes[:max_themes]
