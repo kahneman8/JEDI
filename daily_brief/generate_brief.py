@@ -89,7 +89,7 @@ def compose_and_generate(
             {"role": "system", "content": system_json},
             {"role": "user", "content": user_json},
         ],
-        max_tokens=MAX_OUTPUT_TOKENS,
+        max_completion_tokens=MAX_OUTPUT_TOKENS,
     )
     out_json_text = r_json.choices[0].message.content or ""
     try:
@@ -113,7 +113,7 @@ def compose_and_generate(
             {"role": "system", "content": system_md},
             {"role": "user", "content": user_md},
         ],
-        max_tokens=MAX_OUTPUT_TOKENS,
+        max_completion_tokens=MAX_OUTPUT_TOKENS,
     )
     brief_md = r_md.choices[0].message.content or ""
 
