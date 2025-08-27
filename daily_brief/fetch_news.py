@@ -1,41 +1,69 @@
 """phase1_daily_brief/fetch_news.py"""
-import re, requests, hashlib
+import json
+import re
+import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
-import openai
 
+from openai import OpenAI
 from .config import (
     MODEL, OPENAI_API_KEY, GLOBAL_QUERY, LOCAL_QUERY,
     SEARCH_MAX_RESULTS, FETCH_TIMEOUT_SEC, MAX_WORKERS, MAX_ARTICLES_TOTAL
 )
 
-openai.api_key = OPENAI_API_KEY
+# Init OpenAI client (uses env var or explicit key)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _perform_search(query, max_results):
     """
-    Use GPT-5 Pro with the web_search tool to find news URLs.
+    Use GPT-5 Pro Responses API with the web_search tool to find news URLs.
     Returns a list of dicts with keys: headline, url.
     """
-    response = openai.Response.create(
-        model=MODEL,
-        input=f"Find {max_results} latest headlines for: {query}",
-        tools=[{"type": "web_search"}]
-    )
     results = []
-    # Parse annotations containing url_citations
-    for out in getattr(response, "output", []):
-        content = getattr(out, "content", None)
-        if not content:
-            continue
-        for item in content:
-            for ann in item.get("annotations", []):
-                if ann.get("type") == "url_citation":
-                    results.append({
-                        "headline": ann.get("title", ""),
-                        "url": ann.get("url", "")
-                    })
-    # Limit the number of results
+
+    # Primary: Responses API + web_search tool
+    try:
+        resp = client.responses.create(
+            model=MODEL,
+            input=f"Find {max_results} latest headlines for: {query}",
+            tools=[{"type": "web_search"}],
+        )
+        data = resp.model_dump() if hasattr(resp, "model_dump") else resp
+        for out in (data.get("output") or []):
+            for block in (out.get("content") or []):
+                for ann in (block.get("annotations") or []):
+                    if ann.get("type") == "url_citation":
+                        url = ann.get("url") or ""
+                        title = ann.get("title") or ""
+                        if url:
+                            results.append({"headline": title, "url": url})
+        if results:
+            return results[:max_results]
+    except Exception:
+        pass  # fall back to ChatCompletion JSON approach below
+
+    # Fallback: ask for JSON array of {headline,url}
+    try:
+        chat = client.chat.completions.create(
+            model=MODEL,
+            temperature=0,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Return a JSON array of objects with 'headline' and 'url' for the top "
+                    f"{max_results} recent, reputable headlines about: {query}. "
+                    "Only output JSON, no extra text."
+                ),
+            }],
+        )
+        txt = chat.choices[0].message.content
+        start, end = txt.find("["), txt.rfind("]")
+        if start != -1 and end != -1:
+            results = json.loads(txt[start:end+1])
+    except Exception:
+        results = []
+
     return results[:max_results]
 
 
@@ -49,7 +77,7 @@ def _fetch_article(item):
         resp = requests.get(
             url,
             timeout=FETCH_TIMEOUT_SEC,
-            headers={"User-Agent": "Mozilla/5.0"}
+            headers={"User-Agent": "Mozilla/5.0"},
         )
         if resp.status_code != 200:
             item["content"] = ""
