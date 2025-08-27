@@ -14,7 +14,6 @@ def _single_classify(headline: str, content: str = "") -> str:
     )
     resp = client.chat.completions.create(
         model=MODEL,
-        temperature=TEMPERATURE,
         messages=[{"role": "user", "content": prompt}],
     )
     answer = (resp.choices[0].message.content or "").strip()
@@ -38,7 +37,6 @@ def batch_assign_sector(items: list) -> None:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            temperature=TEMPERATURE,
             messages=[{"role": "user", "content": prompt}],
         )
         payload = (resp.choices[0].message.content or "").strip()
