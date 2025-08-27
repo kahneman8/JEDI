@@ -7,7 +7,7 @@ MODEL_UTILITY = "gpt-4o-mini"   # fast/cheap for sector & sentiment
 # Temperature 0 for deterministic outputs
 TEMPERATURE = 0
 # Maximum tokens for large outputs (adjust to your quota)
-MAX_TOKENS = 2000
+MAX_OUTPUT_TOKENS = 2000
 # API key from environment (do not hard-code secrets)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Search queries for global & local news
