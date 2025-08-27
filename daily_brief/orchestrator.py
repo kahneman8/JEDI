@@ -24,17 +24,17 @@ def run_morning_brief():
  # 4. Group by sector
  news_by_sector = {}
  for it in news_items:
- sector = it.get("sector", "Unknown")
- news_by_sector.setdefault(sector, []).append(it)
+  sector = it.get("sector", "Unknown")
+  news_by_sector.setdefault(sector, []).append(it)
  # 5. Compute sentiment indicators per sector
- sentiment_indicators = {}
+  sentiment_indicators = {}
  for sector, items in news_by_sector.items():
- counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
- for it in items:
- sentiment = it.get("sentiment", "Neutral")
- if sentiment in counts:
- counts[sentiment] += 1
- sentiment_indicators[sector] = counts
+  counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
+  for it in items:
+   sentiment = it.get("sentiment", "Neutral")
+   if sentiment in counts:
+    counts[sentiment] += 1
+  sentiment_indicators[sector] = counts
  # 6. Watchlist alerts
  curated_alerts = check_curated_watchlist(news_items)
  dynamic_alerts = find_dynamic_trends(news_items)
@@ -44,31 +44,31 @@ def run_morning_brief():
  # 8. Generate brief
  # Market summaries and economic events could be filled by the model; pass empty
  brief_json, brief_md = compose_and_generate(
- date=date_str,
- market_summaries={},
- economic_events=[],
- news_by_sector=news_by_sector,
- watchlist_alerts=watchlist_alerts,
- emerging_themes=themes,
- sentiment_indicators=sentiment_indicators
+  date=date_str,
+  market_summaries={},
+  economic_events=[],
+  news_by_sector=news_by_sector,
+  watchlist_alerts=watchlist_alerts,
+  emerging_themes=themes,
+  sentiment_indicators=sentiment_indicators
  )
  # 9. Validate JSON against schema
  schema_path = os.path.join(os.path.dirname(__file__), "schema.json")
  schema = json.load(open(schema_path))
  try:
- validate(instance=brief_json, schema=schema)
- print("JSON validation succeeded.")
+  validate(instance=brief_json, schema=schema)
+  print("JSON validation succeeded.")
  except ValidationError as e:
- print("JSON validation failed:", e)
+  print("JSON validation failed:", e)
  # Optionally, handle or raise the error
  # 10. Save outputs
  os.makedirs("outputs", exist_ok=True)
  json_file = f"outputs/{date_str}_brief.json"
  md_file = f"outputs/{date_str}_brief.md"
  with open(json_file, "w") as jf:
- json.dump(brief_json, jf, indent=2)
+  json.dump(brief_json, jf, indent=2)
  with open(md_file, "w") as mf:
- mf.write(brief_md)
+  mf.write(brief_md)
  print(f"Morning brief saved: {json_file}, {md_file}")
 if __name__ == "__main__":
  run_morning_brief()
