@@ -7,9 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from .config import (
-    OPENAI_API_KEY, MODEL_UTILITY,  # << use MODEL_UTILITY
-    GLOBAL_QUERY, LOCAL_QUERY,
-    SEARCH_MAX_RESULTS, FETCH_TIMEOUT_SEC, MAX_WORKERS, MAX_ARTICLES_TOTAL
+    OPENAI_API_KEY,
+    MODEL_UTILITY,  # use MODEL_UTILITY
+    GLOBAL_QUERY,
+    LOCAL_QUERY,
+    SEARCH_MAX_RESULTS,
+    FETCH_TIMEOUT_SEC,
+    MAX_WORKERS,
+    MAX_ARTICLES_TOTAL,
 )
 
 # Init OpenAI client (uses env var or explicit key)
@@ -21,7 +26,7 @@ def _perform_search(query, max_results):
     # Primary: Responses API + web_search tool
     try:
         resp = client.responses.create(
-            model=MODEL_UTILITY,  # << was MODEL
+            model=MODEL_UTILITY,
             input=f"Find {max_results} latest headlines for: {query}",
             tools=[{"type": "web_search"}],
         )
@@ -40,26 +45,29 @@ def _perform_search(query, max_results):
         pass
 
     # Fallback: ask for JSON array of {headline,url}
-   try:
+    try:
         chat = client.chat.completions.create(
-            model=MODEL_UTILITY,  # << was MODEL
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Return a JSON array of objects with 'headline' and 'url' for the top "
-                    f"{max_results} recent, reputable headlines about: {query}. "
-                    "Only output JSON, no extra text."
-                ),
-            }],
+            model=MODEL_UTILITY,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Return a JSON array of objects with 'headline' and 'url' for the top "
+                        f"{max_results} recent, reputable headlines about: {query}. "
+                        "Only output JSON, no extra text."
+                    ),
+                }
+            ],
         )
         txt = chat.choices[0].message.content
         s, e = txt.find("["), txt.rfind("]")
         if s != -1 and e != -1:
-            results = json.loads(txt[s:e+1])
+            results = json.loads(txt[s : e + 1])
     except Exception:
         results = []
 
     return results[:max_results]
+
 
 def _fetch_article(item):
     """
