@@ -2,7 +2,7 @@
 import re, json
 from collections import Counter
 from openai import OpenAI
-from .config import OPENAI_API_KEY, MODEL_UTILITY  # <- updated
+from .config import OPENAI_API_KEY, MODEL  # <- updated
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -74,7 +74,7 @@ def find_emerging_themes(items: list, max_themes: int = 3) -> list:
     )
     try:
         resp = client.chat.completions.create(
-            model=MODEL_UTILITY,
+            model=MODEL,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = (resp.choices[0].message.content or "").strip()
