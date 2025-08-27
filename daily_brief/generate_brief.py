@@ -1,7 +1,9 @@
-"""phase1_daily_brief/generate_brief.py"""
-import json, re, openai
-from .config import MODEL, TEMPERATURE, MAX_TOKENS
+"""daily_brief/generate_brief.py"""
+import os, json
+from openai import OpenAI
+from .config import MODEL, MAX_TOKENS, OPENAI_API_KEY
 
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def compose_and_generate(
     date: str,
@@ -13,88 +15,67 @@ def compose_and_generate(
     sentiment_indicators: dict,
 ) -> tuple:
     """
-    Use GPT-5 Pro to assemble the brief. Returns (json_dict, markdown_string).
+    Build the brief in two steps using the v1 SDK:
+      1) JSON via Responses API + json_schema (strict)
+      2) Markdown via Responses API (formatting only)
+    Returns (json_dict, markdown_string).
     """
-    # Prepare text for sectors and watchlists
-    sectors_text = ""
-    for sector, items in news_by_sector.items():
-        sectors_text += f"\n{sector}:\n"
-        for it in items:
-            title = it.get("headline", "")
-            sentiment = it.get("sentiment", "")
-            url = it.get("url", "")
-            sectors_text += f"- {title} ({sentiment}) ({url})\n"
+    # 1) Load the same schema used for validation so the model emits strict JSON
+    schema_path = os.path.join(os.path.dirname(__file__), "schema.json")
+    schema = json.load(open(schema_path))
 
-    watchlist_text = "".join(f"- {alert}\n" for alert in watchlist_alerts)
-    themes_text = "".join(
-        f"- **{t['theme']}**: {t['description']}\n" for t in emerging_themes
+    # Provide the collected data as context; the model fills any missing summaries/events
+    context = {
+        "date": date,
+        "market_summaries": market_summaries or {},
+        "economic_events": economic_events or [],
+        "news_by_sector": news_by_sector,
+        "watchlist_alerts": watchlist_alerts,
+        "emerging_themes": emerging_themes,
+        "sentiment_indicators": sentiment_indicators,
+    }
+
+    prompt_json = (
+        "You are an equity research assistant. Using ONLY the provided context JSON, "
+        "produce a Morning Brief that strictly matches the schema (no extra fields). "
+        "If market_summaries/economic_events are empty, infer concise content from the context. "
+        "Preserve all URLs so every bullet can be cited.\n\n"
+        f"Context JSON:\n{json.dumps(context, ensure_ascii=False)}"
     )
 
-    # System instructions and schema description
-    system_prompt = (
-        "You are an equity research AI assistant tasked with generating a structured morning market brief. "
-        "Produce two outputs: first, a JSON object strictly following the provided schema; second, a well-formatted Markdown report. "
-        "Every statement must end with a citation using the provided URLs. Do not invent facts."
-    )
-
-    schema_desc = """
-JSON schema:
-{
-  "date": "<YYYY-MM-DD>",
-  "market_summaries": {"global": "<text>", "asia": "<text>", "indonesia": "<text>"},
-  "economic_events": [{"event": "<text>", "impact": "<text>"}],
-  "news_by_sector": {
-    "<Sector>": [
-      {"headline": "<text>", "sentiment": "Positive|Negative|Neutral", "source": "<publisher>", "url": "<url>"}
-    ]
-  },
-  "watchlist_alerts": ["<alert>"],
-  "emerging_themes": [{"theme": "<name>", "description": "<sentence>"}],
-  "sentiment_indicators": {
-    "<Sector>": {"Positive": <int>, "Negative": <int>, "Neutral": <int>}
-  }
-}
-The Markdown report should mirror the same data with headings and bullets and citation footnotes.
-"""
-
-    # Compose user content with provided data
-    user_content = (
-        f"Date: {date}\n\n"
-        "News by sector:\n" + sectors_text + "\n"
-        "Watchlist alerts:\n" + watchlist_text + "\n"
-        "Emerging themes:\n" + themes_text + "\n"
-        "(Economic events and market summaries can be inferred from this context if not provided.)"
-    )
-
-    messages = [
-        {"role": "system", "content": system_prompt + schema_desc},
-        {"role": "user", "content": user_content},
-    ]
-
-    response = openai.ChatCompletion.create(
+    r_json = client.responses.create(
         model=MODEL,
-        messages=messages,
-        max_tokens=MAX_TOKENS,
+        input=prompt_json,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "MorningBrief",
+                "schema": schema,
+                "strict": True,
+            },
+        },
+        max_output_tokens=MAX_TOKENS,
     )
-    output = response.choices[0].message["content"]
 
-    # Extract JSON from triple backticks or braces
-    json_match = re.search(r"```json\s*(\{.*?\})\s*```", output, re.S)
-    if json_match:
-        json_text = json_match.group(1)
-        markdown_text = output.replace(json_match.group(0), "").strip()
-    else:
-        # Fallback: find first curly brace block as JSON
-        start = output.find("{")
-        end = output.rfind("}")
-        json_text = output[start : end + 1]
-        markdown_text = output[end + 1 :].strip()
+    json_text = r_json.output_text
+    brief_json = json.loads(json_text)
 
-    # Parse JSON safely
-    try:
-        brief_json = json.loads(json_text)
-    except json.JSONDecodeError:
-        # If JSON fails, parse loosely (replace newlines)
-        brief_json = json.loads(json_text.replace("\n", " "))
+    # 2) Render Markdown from the validated JSON (formatting only)
+    prompt_md = (
+        "Format the following Morning Brief JSON into a clean Markdown report:\n"
+        " - Title with date\n"
+        " - Headings for Market Summaries, Economic Events, News by Sector, Watchlist Alerts, Emerging Themes\n"
+        " - Bulleted items\n"
+        " - Include source URLs at the end of each bullet as citations\n"
+        " - Do NOT output JSON; only Markdown\n\n"
+        f"{json.dumps(brief_json, ensure_ascii=False)}"
+    )
 
-    return brief_json, markdown_text
+    r_md = client.responses.create(
+        model=MODEL,
+        input=prompt_md,
+        max_output_tokens=MAX_TOKENS,
+    )
+    brief_md = r_md.output_text
+
+    return brief_json, brief_md
