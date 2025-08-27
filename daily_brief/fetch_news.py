@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from .config import (
-    MODEL, OPENAI_API_KEY, GLOBAL_QUERY, LOCAL_QUERY,
+    OPENAI_API_KEY, MODEL_UTILITY,  # << use MODEL_UTILITY
+    GLOBAL_QUERY, LOCAL_QUERY,
     SEARCH_MAX_RESULTS, FETCH_TIMEOUT_SEC, MAX_WORKERS, MAX_ARTICLES_TOTAL
 )
 
@@ -16,16 +17,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _perform_search(query, max_results):
-    """
-    Use GPT-5 Pro Responses API with the web_search tool to find news URLs.
-    Returns a list of dicts with keys: headline, url.
-    """
     results = []
-
     # Primary: Responses API + web_search tool
     try:
         resp = client.responses.create(
-            model=MODEL,
+            model=MODEL_UTILITY,  # << was MODEL
             input=f"Find {max_results} latest headlines for: {query}",
             tools=[{"type": "web_search"}],
         )
@@ -41,13 +37,12 @@ def _perform_search(query, max_results):
         if results:
             return results[:max_results]
     except Exception:
-        pass  # fall back to ChatCompletion JSON approach below
+        pass
 
     # Fallback: ask for JSON array of {headline,url}
-    try:
+   try:
         chat = client.chat.completions.create(
-            model=MODEL,
-            temperature=0,
+            model=MODEL_UTILITY,  # << was MODEL
             messages=[{
                 "role": "user",
                 "content": (
@@ -58,14 +53,13 @@ def _perform_search(query, max_results):
             }],
         )
         txt = chat.choices[0].message.content
-        start, end = txt.find("["), txt.rfind("]")
-        if start != -1 and end != -1:
-            results = json.loads(txt[start:end+1])
+        s, e = txt.find("["), txt.rfind("]")
+        if s != -1 and e != -1:
+            results = json.loads(txt[s:e+1])
     except Exception:
         results = []
 
     return results[:max_results]
-
 
 def _fetch_article(item):
     """
