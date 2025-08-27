@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "date",
+    "market_summaries",
+    "economic_events",
+    "news_by_sector",
+    "watchlist_alerts",
+    "emerging_themes",
+    "sentiment_indicators"
+  ],
+  "properties": {
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "market_summaries": {
+      "type": "object",
+      "properties": {
+        "global":    { "type": "string" },
+        "asia":      { "type": "string" },
+        "indonesia": { "type": "string" }
+      },
+      "required": ["global", "asia", "indonesia"],
+      "additionalProperties": false
+    },
+    "economic_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { "event": { "type": "string" }, "impact": { "type": "string" } },
+        "required": ["event", "impact"],
+        "additionalProperties": false
+      }
+    },
+    "news_by_sector": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "headline":  { "type": "string" },
+              "sentiment": { "type": "string", "enum": ["Positive","Negative","Neutral"] },
+              "source":    { "type": "string" },
+              "url":       { "type": "string", "minLength": 8 }
+            },
+            "required": ["headline", "sentiment", "source", "url"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "watchlist_alerts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "emerging_themes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { "theme": { "type": "string" }, "description": { "type": "string" } },
+        "required": ["theme", "description"],
+        "additionalProperties": false
+      }
+    },
+    "sentiment_indicators": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "object",
+          "properties": {
+            "Positive": { "type": "integer" },
+            "Negative": { "type": "integer" },
+            "Neutral":  { "type": "integer" }
+          },
+          "required": ["Positive", "Negative", "Neutral"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
