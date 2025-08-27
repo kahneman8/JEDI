@@ -15,7 +15,6 @@ def _single_sentiment(text: str) -> str:
     )
     resp = client.chat.completions.create(
         model=MODEL,
-        temperature=TEMPERATURE,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = (resp.choices[0].message.content or "").strip().capitalize()
@@ -39,7 +38,6 @@ def batch_assign_sentiment(items: list) -> None:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            temperature=TEMPERATURE,
             messages=[{"role": "user", "content": prompt}],
         )
         payload = (resp.choices[0].message.content or "").strip()
