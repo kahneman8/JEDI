@@ -1,56 +1,61 @@
-import json, datetime, os
+import os, json, datetime
 from jsonschema import validate, ValidationError
-from .fetch_news import fetch_all_news
+
+from .fetch_news import fetch_all_news, dedupe_and_trim
 from .classify_sector import batch_assign_sector
 from .analyze_sentiment import batch_assign_sentiment
 from .detect_themes import check_curated_watchlist, find_dynamic_trends, find_emerging_themes
 from .generate_brief import compose_and_generate
-from .config import GICS_SECTORS
+from .config import MAX_ARTICLES_TOTAL
+from .utils_cache import get as cache_get, set as cache_set
 
 def run_morning_brief():
-    """
-    Main entry point for the daily pipeline. Fetches news, classifies
-    sectors, analyses sentiment, computes watchlists & themes, generates report,
-    validates JSON and saves outputs to disk.
-    """
     date_str = datetime.date.today().isoformat()
     print(f"[{date_str}] Generating morning brief…")
 
-    # 1. Fetch news
+    # 1) Fetch news, dedupe, cap
     news_items = fetch_all_news()
+    news_items = dedupe_and_trim(news_items, limit=MAX_ARTICLES_TOTAL)
 
-    # 2. Classify sectors
+    # 2) Prefill from cache
+    for it in news_items:
+        url = it.get("url")
+        if not url:
+            continue
+        c = cache_get(url)
+        if c.get("sector"):
+            it["sector"] = c["sector"]
+        if c.get("sentiment"):
+            it["sentiment"] = c["sentiment"]
+
+    # 3) Classify sectors (batched)
     batch_assign_sector(news_items)
 
-    # 3. Analyse sentiment
+    # 4) Sentiment (batched)
     batch_assign_sentiment(news_items)
 
-    # 4. Group by sector
+    # 5) Group by sector & sentiment indicators
     news_by_sector = {}
     for it in news_items:
         sector = it.get("sector", "Unknown")
         news_by_sector.setdefault(sector, []).append(it)
 
-    # 5. Compute sentiment indicators per sector
     sentiment_indicators = {}
     for sector, items in news_by_sector.items():
         counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
         for it in items:
-            sentiment = it.get("sentiment", "Neutral")
-            if sentiment in counts:
-                counts[sentiment] += 1
+            s = it.get("sentiment", "Neutral")
+            if s in counts:
+                counts[s] += 1
         sentiment_indicators[sector] = counts
 
-    # 6. Watchlist alerts
+    # 6) Watchlists & themes
     curated_alerts = check_curated_watchlist(news_items)
     dynamic_alerts = find_dynamic_trends(news_items)
     watchlist_alerts = curated_alerts + dynamic_alerts
-
-    # 7. Emerging themes
     themes = find_emerging_themes(news_items)
 
-    # 8. Generate brief
-    # Market summaries and economic events could be filled by the model; pass empty
+    # 7) Compose final JSON + Markdown
     brief_json, brief_md = compose_and_generate(
         date=date_str,
         market_summaries={},
@@ -61,7 +66,7 @@ def run_morning_brief():
         sentiment_indicators=sentiment_indicators
     )
 
-    # 9. Validate JSON against schema
+    # 8) Validate
     schema_path = os.path.join(os.path.dirname(__file__), "schema.json")
     schema = json.load(open(schema_path))
     try:
@@ -69,9 +74,8 @@ def run_morning_brief():
         print("JSON validation succeeded.")
     except ValidationError as e:
         print("JSON validation failed:", e)
-        # Optionally, handle or raise the error
 
-    # 10. Save outputs
+    # 9) Save & update cache
     os.makedirs("outputs", exist_ok=True)
     json_file = f"outputs/{date_str}_brief.json"
     md_file = f"outputs/{date_str}_brief.md"
@@ -81,6 +85,15 @@ def run_morning_brief():
         mf.write(brief_md)
     print(f"Morning brief saved: {json_file}, {md_file}")
 
+    # Cache sector/sentiment by URL for reuse
+    for it in news_items:
+        url = it.get("url")
+        if not url:
+            continue
+        cache_set(url, {
+            "sector": it.get("sector"),
+            "sentiment": it.get("sentiment")
+        })
 
 if __name__ == "__main__":
     run_morning_brief()
