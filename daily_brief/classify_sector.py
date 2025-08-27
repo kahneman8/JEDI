@@ -1,7 +1,7 @@
 import json, time, random, openai
 from openai import OpenAI
 from .config import (
-    OPENAI_API_KEY, MODEL_UTILITY, MAX_PER_BATCH,
+    OPENAI_API_KEY, MODEL, MAX_PER_BATCH,
     HEADLINE_ONLY_FOR_UTILITY
 )
 
@@ -93,7 +93,7 @@ def batch_assign_sector(items: list) -> None:
         # Call Responses API with strict JSON
         resp = _backoff(
             client.responses.create,
-            model=MODEL_UTILITY,
+            model=MODEL,
             input=prompt,
             response_format={"type": "json_schema", "json_schema": SECTOR_SCHEMA}
         )
