@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
 from .config import (
     OPENAI_API_KEY,
-    MODEL_UTILITY,  # use MODEL_UTILITY
+    MODEL,
     GLOBAL_QUERY,
     LOCAL_QUERY,
     SEARCH_MAX_RESULTS,
@@ -26,7 +26,7 @@ def _perform_search(query, max_results):
     # Primary: Responses API + web_search tool
     try:
         resp = client.responses.create(
-            model=MODEL_UTILITY,
+            model=MODEL,
             input=f"Find {max_results} latest headlines for: {query}",
             tools=[{"type": "web_search"}],
         )
@@ -47,7 +47,7 @@ def _perform_search(query, max_results):
     # Fallback: ask for JSON array of {headline,url}
     try:
         chat = client.chat.completions.create(
-            model=MODEL_UTILITY,
+            model=MODEL,
             messages=[
                 {
                     "role": "user",
