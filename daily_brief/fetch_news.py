@@ -33,58 +33,19 @@ def _is_blacklisted(url: str) -> bool:
     d = _domain(url)
     return any(d.endswith(bad) for bad in BLACKLIST_DOMAINS)
 
-def _perform_search(label: str, query: str, max_results: int):
-    _log(f"{label}: web_search start")
+def _perform_search(query, max_results):
     results = []
     try:
         resp = client.responses.create(
             model=MODEL,
-            input=f"Give {max_results} recent reputable headlines for: {query}",
+            input=f"Find {max_results} latest reputable headlines for: {query}",
             tools=[{"type": "web_search"}],
         )
+        try:
+            print(f"[web_search] resp_id={getattr(resp,'id',None)} query={query}")
+        except Exception:
+            pass
         data = resp.model_dump() if hasattr(resp, "model_dump") else resp
-        for out in (data.get("output") or []):
-            for block in (out.get("content") or []):
-                for ann in (block.get("annotations") or []):
-                    if ann.get("type") == "url_citation":
-                        url = ann.get("url") or ""
-                        title = ann.get("title") or ""
-                        if url and not _is_blacklisted(url):
-                            results.append({"headline": title, "url": url})
-    except Exception as e:
-        _log(f"{label}: web_search error -> {type(e).__name__}")
-
-    if results:
-        _log(f"{label}: web_search results={len(results)}")
-        return results[:max_results]
-
-    # Fallback JSON
-    try:
-        chat = client.chat.completions.create(
-            model=MODEL,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Return a JSON array of objects with 'headline' and 'url' for the top "
-                    f"{max_results} reputable headlines about: {query}. Only JSON."
-                ),
-            }],
-            max_completion_tokens=600,
-        )
-        txt = (chat.choices[0].message.content or "").strip()
-        s, e = txt.find("["), txt.rfind("]")
-        if s != -1 and e != -1:
-            candidate = json.loads(txt[s:e+1])
-            for it in candidate:
-                url = it.get("url") or ""
-                if url and not _is_blacklisted(url):
-                    results.append({"headline": it.get("headline",""), "url": url})
-        _log(f"{label}: fallback JSON results={len(results)}")
-    except Exception as e:
-        _log(f"{label}: fallback JSON error -> {type(e).__name__}")
-
-    return results[:max_results]
-
 def _best_text_from_html(soup: BeautifulSoup) -> str:
     paras = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
     text = " ".join(paras).strip()
