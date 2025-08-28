@@ -10,12 +10,10 @@ from .config import (
     ASIA_HINTS, INDONESIA_HINTS,
     MIN_CONTENT_CHARS_GLOBAL, MIN_CONTENT_CHARS_ID,
 )
-
-# Optional knobs (fallback defaults if not defined in config.py)
+client = OpenAI(api_key = OPENAI_API_KEY)
 
 def _log(msg: str):
     print(f"[fetch_news] {msg}")
-
 
 def _domain(url: str) -> str:
     try:
@@ -23,7 +21,6 @@ def _domain(url: str) -> str:
         return host.split(":")[0].replace("www.", "")
     except Exception:
         return ""
-
 
 def _extract_source(url: str) -> str:
     d = _domain(url)
@@ -33,12 +30,10 @@ def _extract_source(url: str) -> str:
     core = parts[-2] if len(parts) >= 2 else parts[0]
     return core.capitalize()
 
-
 def _is_blacklisted(url: str) -> bool:
     d = _domain(url)
-    return any(d.endswith(bad) for bad in BLACKLIST_DOMAINS)
-
-
+    return any(d.endswith(bad) for bad in BLACKLIST_DOMAINS
+               
 def _strip_tracking(url: str) -> str:
     try:
         u = urlparse(url)
@@ -47,12 +42,10 @@ def _strip_tracking(url: str) -> str:
         return urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(q), u.fragment))
     except Exception:
         return url
-
-
+        
 def _perform_search(label: str, query: str, max_results: int):
     _log(f"{label}: web_search start")
     results = []
-
     # Primary: Responses API + web_search
     try:
         resp = client.responses.create(
@@ -79,38 +72,6 @@ def _perform_search(label: str, query: str, max_results: int):
     if results:
         _log(f"{label}: web_search results={len(results)}")
         return results[:max_results]
-
-    # Fallback: ask for JSON list; we will verify by fetching
-    try:
-        chat = client.chat.completions.create(
-            model=MODEL,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Return a JSON array of objects with 'headline' and 'url' for the top "
-                    f"{max_results} reputable headlines about: {query}. Only JSON."
-                ),
-            }],
-            max_completion_tokens=600,
-        )
-        try:
-            print(f"[fallback] chat_id={getattr(chat,'id',None)} label={label}")
-        except Exception:
-            pass
-        txt = (chat.choices[0].message.content or "").strip()
-        s, e = txt.find("["), txt.rfind("]")
-        if s != -1 and e != -1:
-            candidate = json.loads(txt[s:e+1])
-            for it in candidate:
-                url = it.get("url") or ""
-                if url and not _is_blacklisted(url):
-                    results.append({"headline": it.get("headline", ""), "url": url})
-        _log(f"{label}: fallback JSON results={len(results)}")
-    except Exception as e:
-        _log(f"{label}: fallback JSON error -> {type(e).__name__}")
-
-    return results[:max_results]
-
 
 def _best_text_from_html(soup: BeautifulSoup) -> str:
     # Paragraphs first
