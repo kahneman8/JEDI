@@ -15,8 +15,8 @@
     "market_summaries": {
       "type": "object",
       "properties": {
-        "global":    { "type": "string" },
-        "asia":      { "type": "string" },
+        "global": { "type": "string" },
+        "asia": { "type": "string" },
         "indonesia": { "type": "string" }
       },
       "required": ["global", "asia", "indonesia"],
@@ -39,10 +39,10 @@
           "items": {
             "type": "object",
             "properties": {
-              "headline":  { "type": "string" },
-              "sentiment": { "type": "string", "enum": ["Positive","Negative","Neutral"] },
-              "source":    { "type": "string" },
-              "url":       { "type": "string", "minLength": 8 }
+              "headline": { "type": "string" },
+              "sentiment": { "type": "string", "enum": ["Positive", "Negative", "Neutral"] },
+              "source": { "type": "string" },
+              "url": { "type": "string", "minLength": 8 }
             },
             "required": ["headline", "sentiment", "source", "url"],
             "additionalProperties": false
@@ -51,10 +51,7 @@
       },
       "additionalProperties": false
     },
-    "watchlist_alerts": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
+    "watchlist_alerts": { "type": "array", "items": { "type": "string" } },
     "emerging_themes": {
       "type": "array",
       "items": {
@@ -72,7 +69,7 @@
           "properties": {
             "Positive": { "type": "integer" },
             "Negative": { "type": "integer" },
-            "Neutral":  { "type": "integer" }
+            "Neutral": { "type": "integer" }
           },
           "required": ["Positive", "Negative", "Neutral"],
           "additionalProperties": false
