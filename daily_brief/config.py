@@ -18,7 +18,7 @@ LOCAL_QUERY = "Indonesia market news today"
 SEARCH_MAX_RESULTS = 6 # results per query (top results only)
 # News fetch settings
 FETCH_TIMEOUT_SEC = 12 # seconds per HTTP fetch
-MAX_ARTICLES_TOTAL = 10 # cap to control tokens & cost
+MAX_ARTICLES_TOTAL = 20 # cap to control tokens & cost
 MAX_WORKERS = 6 # thread pool size for fetching URLs
 
 # Behavior
