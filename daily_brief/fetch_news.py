@@ -32,7 +32,7 @@ def _extract_source(url: str) -> str:
 
 def _is_blacklisted(url: str) -> bool:
     d = _domain(url)
-    return any(d.endswith(bad) for bad in BLACKLIST_DOMAINS
+    return any(d.endswith(bad)) for bad in BLACKLIST_DOMAINS
                
 def _strip_tracking(url: str) -> str:
     try:
