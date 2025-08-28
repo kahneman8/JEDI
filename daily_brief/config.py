@@ -19,8 +19,8 @@ SEARCH_MAX_RESULTS = 10
 FETCH_TIMEOUT_SEC = 15
 MAX_WORKERS = 6
 
-MIN_CONTENT_CHARS_GLOBAL = int(os.getenv("MIN_CONTENT_CHARS_GLOBAL", "140"))
-MIN_CONTENT_CHARS_ID     = int(os.getenv("MIN_CONTENT_CHARS_ID", "60"))
+MIN_CONTENT_CHARS_GLOBAL = int(os.getenv("MIN_CONTENT_CHARS_GLOBAL", "40"))
+MIN_CONTENT_CHARS_ID     = int(os.getenv("MIN_CONTENT_CHARS_ID", "40"))
 
 # Fetch/search
 GLOBAL_QUERY = ("You are a buy-side AI analyst focused on global and asia equities market. Compile high-importance market relevant news in the Global + Asia region within the past 24 hours")
