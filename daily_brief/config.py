@@ -24,7 +24,7 @@ SEARCH_MAX_RESULTS = 6 # results per query (top results only)
 FETCH_TIMEOUT_SEC = 12 # seconds per HTTP fetch
 MAX_ARTICLES_TOTAL = 20 # cap to control tokens & cost
 MAX_WORKERS = 6 # thread pool size for fetching URLs
-
+THEMES_MAX = int(os.getenv("THEMES_MAX", "6"))
 # Behavior
 HEADLINE_ONLY_FOR_UTILITY = True #Classify & sentiment on headlines only
 CACHE_PATH = "outputs/model_cache.json"
