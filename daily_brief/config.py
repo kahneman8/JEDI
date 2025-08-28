@@ -6,6 +6,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Model selection: use GPT-5 Pro for all LLM tasks
 # Models
 MODEL = "gpt-5"     # final JSON+Markdown compose
+MODEL_CLASSIFY = "gpt-5-mini"
 # Maximum tokens for large outputs (adjust to your quota)
 MAX_OUTPUT_TOKENS = 2000
 MAX_COMPLETION_TOKENS = 2000
