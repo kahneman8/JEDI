@@ -29,10 +29,6 @@ def _extract_source(url: str) -> str:
     parts = d.split(".")
     core = parts[-2] if len(parts) >= 2 else parts[0]
     return core.capitalize()
-
-def _is_blacklisted(url: str) -> bool:
-    d = _domain(url)
-    return any(d.endswith(bad)) for bad in BLACKLIST_DOMAINS
                
 def _strip_tracking(url: str) -> str:
     try:
