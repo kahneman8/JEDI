@@ -42,24 +42,18 @@ def _backoff(call, *args, **kwargs):
             time.sleep(delay + random.uniform(0,0.25))
             delay = min(delay*2, 5.0)
 
-def _summarize_regions_with_llm(glob: List[Dict], asia: List[Dict], indo: List[Dict]) -> Dict[str,str]:
+def _summarize_regions_with_llm(glob, asia, indo) -> Dict[str,str]:
     def _fmt(items):
-        lines = []
-        for it in items[:SUMMARY_ITEMS_PER_REGION]:
-            lines.append(f"- [{it.get('sector','Unknown')}/{it.get('sentiment','Neutral')}] {it.get('headline','')}")
-        return "\n".join(lines) if lines else "(no items)"
+        return "\n".join(
+            f"- [{it.get('sector','Unknown')}/{it.get('sentiment','Neutral')}] {it.get('headline','')}"
+            for it in items[:SUMMARY_ITEMS_PER_REGION]
+        ) or "(no items)"
+
     prompt = (
-        "You are an equity research assistant. Write concise, factual summaries (1–2 sentences each) "
-        "for Global, Asia, and Indonesia **based only on** the bullet lists below. Do **not** invent facts.\n\n"
-        "Return ONLY this JSON object (no extra text):\n"
-        "{\n"
-        '  "global": "…",\n'
-        '  "asia": "…",\n'
-        '  "indonesia": "…"\n'
-        "}\n\n"
-        f"Global bullets:\n{_fmt(glob)}\n\n"
-        f"Asia bullets:\n{_fmt(asia)}\n\n"
-        f"Indonesia bullets:\n{_fmt(indo)}\n"
+        "Write concise, factual summaries (1–2 sentences each) for Global, Asia, and Indonesia "
+        "**based only on** the bullets below. Do not invent facts.\n"
+        'Return ONLY JSON: {"global":"…","asia":"…","indonesia":"…"}\n\n'
+        f"Global:\n{_fmt(glob)}\n\nAsia:\n{_fmt(asia)}\n\nIndonesia:\n{_fmt(indo)}\n"
     )
     try:
         r = _backoff(
@@ -69,13 +63,20 @@ def _summarize_regions_with_llm(glob: List[Dict], asia: List[Dict], indo: List[D
             response_format={"type":"json_object"},
             max_completion_tokens=350,
         )
+        print(f"[summary] resp_id={getattr(r,'id',None)} model={MODEL_REASON}")
         txt = (r.choices[0].message.content or "").strip()
         data = json.loads(txt) if txt else {}
-        g = data.get("global") or _fallback_summary(glob, "Global")
-        a = data.get("asia") or _fallback_summary(asia, "Asia")
-        i = data.get("indonesia") or _fallback_summary(indo, "Indonesia")
-        return {"global": g, "asia": a, "indonesia": i}
-    except Exception:
+        g = data.get("global")
+        a = data.get("asia")
+        i = data.get("indonesia")
+        # prefer LLM if present; else fallback
+        return {
+            "global": g if g else _fallback_summary(glob, "Global"),
+            "asia": a if a else _fallback_summary(asia, "Asia"),
+            "indonesia": i if i else _fallback_summary(indo, "Indonesia"),
+        }
+    except Exception as e:
+        print(f"[summary] LLM error: {type(e).__name__}")
         return {
             "global": _fallback_summary(glob, "Global"),
             "asia": _fallback_summary(asia, "Asia"),
