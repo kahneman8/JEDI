@@ -9,47 +9,34 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-5")     # final JSON+Markdown compose
 MODEL_CLASSIFY = os.getenv("OPENAI_MODEL_CLASSIFY", "gpt-5-mini")
 MODEL_REASON = os.getenv("OPENAI_MODEL_REASON", "gpt-5")
 MODEL_COMPOSE_PREF = ["gpt-5-mini", "gpt-5"]
-# Maximum tokens for large outputs (adjust to your quota)
-
+# Limits & batching
 MAX_ARTICLES_TOTAL = int(os.getenv("MAX_ARTICLES_TOTAL", "12"))
 MAX_PER_BATCH = int(os.getenv("MAX_PER_BATCH", "6"))
-MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "1200"))
-MAX_OUTPUT_TOKENS = 2000
-
-# Search queries for global & local news
-GLOBAL_QUERY = "Global & Asia market news in the last 72 hours"
-LOCAL_QUERY = "Indonesia market news in the last 72 hours"
-SEARCH_MAX_RESULTS = 6 # results per query (top results only)
-# News fetch settings
-FETCH_TIMEOUT_SEC = 12 # seconds per HTTP fetch
-MAX_ARTICLES_TOTAL = 20 # cap to control tokens & cost
-MAX_WORKERS = 6 # thread pool size for fetching URLs
-THEMES_MAX = int(os.getenv("THEMES_MAX", "6"))
+MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "900"))
 SUMMARY_ITEMS_PER_REGION = int(os.getenv("SUMMARY_ITEMS_PER_REGION", "8"))
+THEMES_MAX = int(os.getenv("THEMES_MAX", "3"))
+
+# Fetch/search
+GLOBAL_QUERY = ('You're a buy-side AI analyst focused on global and asia equities market. Compile high-importance market relevant news in the Global + Asia region within the past 24 hours')
+# Strong Indonesia hint (English + Bahasa + outlet hints given to the web_search tool)
+LOCAL_QUERY  = ('You're a buy-side AI analyst focused on the Indonesian market. Compile high-importance market relevant news in the Indonesia region within the past 24 hours')
 # Behavior
-HEADLINE_ONLY_FOR_UTILITY = True #Classify & sentiment on headlines only
+HEADLINE_ONLY_FOR_UTILITY = True
 CACHE_PATH = "outputs/model_cache.json"
 
-# Region Detection
+# Region detection
+BLACKLIST_DOMAINS = {"example.com"}
 ASIA_HINTS = {
     "asia","asian","china","chinese","japan","japanese","korea","korean","taiwan","hong kong",
-    "nikkei","kospi","sgx","tse","shanghai","shenzhen","seoul","tokyo","taipei","singapore","malaysia","thailand","philippines","vietnam","india","indian"
+    "nikkei","kospi","sgx","tse","shanghai","shenzhen","seoul","tokyo","taipei","singapore",
+    "malaysia","thailand","philippines","vietnam","india","indian"
 }
 INDONESIA_HINTS = {
-    "indonesia","indonesian","jakarta","jci","idx","bank indonesia","bi","rupiah","idrupiah","idn"
+    "indonesia","indonesian","jakarta","jci","idx","bei","bank indonesia","bi","rupiah","idrupiah","idn","ihsg"
 }
 
-# GICS sectors mapping (top-level sectors only)
-GICS_SECTORS = {
- "Energy": "Oil, gas, coal and fuels",
- "Materials": "Raw materials (metals, chemicals, etc.)",
- "Industrials": "Manufacturing, aerospace, logistics",
- "Consumer Discretionary": "Non-essential goods & services",
- "Consumer Staples": "Essential goods (food, beverage, household)",
- "Health Care": "Pharma, biotech, medical devices",
- "Financials": "Banking, insurance, investment, REITs",
- "Information Technology": "Software, hardware, semiconductors",
- "Communication Services": "Telecom, media, entertainment",
- "Utilities": "Electric, water, gas utilities",
- "Real Estate": "Real estate"
-}
+# GICS sectors
+GICS_SECTORS = [
+    "Energy","Materials","Industrials","Consumer Discretionary","Consumer Staples",
+    "Health Care","Financials","Information Technology","Communication Services","Utilities","Real Estate"
+]
