@@ -7,7 +7,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Models
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5")     # final JSON+Markdown compose
 MODEL_CLASSIFY = os.getenv("OPENAI_MODEL_CLASSIFY", "gpt-5-mini")
-MODEL_REASON = os.getenv("OPENAI_MODEL_REASON", "gpt-5"
+MODEL_REASON = os.getenv("OPENAI_MODEL_REASON", "gpt-5")
 MODEL_COMPOSE_PREF = ["gpt-5-mini", "gpt-5"]
 # Maximum tokens for large outputs (adjust to your quota)
 
