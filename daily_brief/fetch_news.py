@@ -1,5 +1,6 @@
+# daily_brief/fetch_news.py
 import json, re, time, requests
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl, urlencode
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
@@ -10,10 +11,31 @@ from .config import (
     MIN_CONTENT_CHARS_GLOBAL, MIN_CONTENT_CHARS_ID,
 )
 
+# Optional knobs (fallback defaults if not defined in config.py)
+try:
+    from .config import TRUSTED_MIN_OVERRIDES
+except Exception:
+    TRUSTED_MIN_OVERRIDES = {
+        "reuters.com": 40,
+        "apnews.com":  40,
+        "ft.com":      40,
+        "scmp.com":    40,
+        "bloomberg.com": 50,
+        "cnbc.com":    50,
+        "nikkei.com":  50,
+    }
+try:
+    from .config import SEED_URLS_GLOBAL, SEED_URLS_INDONESIA
+except Exception:
+    SEED_URLS_GLOBAL = []
+    SEED_URLS_INDONESIA = []
+
 client = OpenAI(api_key=OPENAI_API_KEY)
+
 
 def _log(msg: str):
     print(f"[fetch_news] {msg}")
+
 
 def _domain(url: str) -> str:
     try:
@@ -22,28 +44,46 @@ def _domain(url: str) -> str:
     except Exception:
         return ""
 
+
 def _extract_source(url: str) -> str:
     d = _domain(url)
-    if not d: return "source"
+    if not d:
+        return "source"
     parts = d.split(".")
     core = parts[-2] if len(parts) >= 2 else parts[0]
     return core.capitalize()
+
 
 def _is_blacklisted(url: str) -> bool:
     d = _domain(url)
     return any(d.endswith(bad) for bad in BLACKLIST_DOMAINS)
 
+
+def _strip_tracking(url: str) -> str:
+    try:
+        u = urlparse(url)
+        q = [(k, v) for (k, v) in parse_qsl(u.query, keep_blank_values=True)
+             if not k.lower().startswith("utm_")]
+        return urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(q), u.fragment))
+    except Exception:
+        return url
+
+
 def _perform_search(label: str, query: str, max_results: int):
     _log(f"{label}: web_search start")
     results = []
 
-    # --- primary: Responses API + web_search ---
+    # Primary: Responses API + web_search
     try:
         resp = client.responses.create(
             model=MODEL,
             input=f"Give {max_results} recent reputable headlines for: {query}",
             tools=[{"type": "web_search"}],
         )
+        try:
+            print(f"[web_search] resp_id={getattr(resp,'id',None)} label={label}")
+        except Exception:
+            pass
         data = resp.model_dump() if hasattr(resp, "model_dump") else resp
         for out in (data.get("output") or []):
             for block in (out.get("content") or []):
@@ -60,7 +100,7 @@ def _perform_search(label: str, query: str, max_results: int):
         _log(f"{label}: web_search results={len(results)}")
         return results[:max_results]
 
-    # --- fallback: ask for JSON list; we'll verify by fetching ---
+    # Fallback: ask for JSON list; we will verify by fetching
     try:
         chat = client.chat.completions.create(
             model=MODEL,
@@ -73,6 +113,10 @@ def _perform_search(label: str, query: str, max_results: int):
             }],
             max_completion_tokens=600,
         )
+        try:
+            print(f"[fallback] chat_id={getattr(chat,'id',None)} label={label}")
+        except Exception:
+            pass
         txt = (chat.choices[0].message.content or "").strip()
         s, e = txt.find("["), txt.rfind("]")
         if s != -1 and e != -1:
@@ -80,18 +124,21 @@ def _perform_search(label: str, query: str, max_results: int):
             for it in candidate:
                 url = it.get("url") or ""
                 if url and not _is_blacklisted(url):
-                    results.append({"headline": it.get("headline",""), "url": url})
+                    results.append({"headline": it.get("headline", ""), "url": url})
         _log(f"{label}: fallback JSON results={len(results)}")
     except Exception as e:
         _log(f"{label}: fallback JSON error -> {type(e).__name__}")
 
     return results[:max_results]
+
+
 def _best_text_from_html(soup: BeautifulSoup) -> str:
+    # Paragraphs first
     paras = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
     text = " ".join(paras).strip()
     if text:
         return text[:2000]
-    # meta fallbacks
+    # Meta fallbacks
     for selector in [
         ("meta", {"name": "description"}),
         ("meta", {"property": "og:description"}),
@@ -100,13 +147,16 @@ def _best_text_from_html(soup: BeautifulSoup) -> str:
         tag = soup.find(*selector)
         if tag and tag.get("content"):
             return tag["content"].strip()[:400]
+    # Title as last resort
     title = soup.find("title")
     if title and title.get_text(strip=True):
         return title.get_text(strip=True)[:200]
     return ""
 
+
 def _fetch_article(item):
-    url = item.get("url")
+    url = _strip_tracking(item.get("url", ""))
+    item["url"] = url
     try:
         r = requests.get(
             url,
@@ -124,10 +174,11 @@ def _fetch_article(item):
         soup = BeautifulSoup(r.text, "html.parser")
         text = _best_text_from_html(soup)
         item["content"] = (text or "").strip()
-        item["source"]  = _extract_source(url)
+        item["source"] = _extract_source(url)
     except Exception:
         item["content"] = ""
     return item
+
 
 def _detect_region(headline: str, content: str, url: str, force_indonesia: bool) -> str:
     if force_indonesia:
@@ -140,15 +191,19 @@ def _detect_region(headline: str, content: str, url: str, force_indonesia: bool)
         return "Asia"
     return "Global"
 
+
 def _dedupe(items, limit):
     seen, out = set(), []
     for it in items:
-        key = (it.get("url",""), (it.get("headline","")).strip().lower())
-        if key in seen: continue
+        key = (it.get("url", ""), (it.get("headline", "")).strip().lower())
+        if key in seen:
+            continue
         seen.add(key)
         out.append(it)
-        if len(out) >= limit: break
+        if len(out) >= limit:
+            break
     return out
+
 
 def _scrape_seed_pages(seed_urls):
     out = []
@@ -175,7 +230,8 @@ def _scrape_seed_pages(seed_urls):
                 cand.append({"headline": txt, "url": href})
             seen = set()
             for c in cand:
-                if c["url"] in seen: continue
+                if c["url"] in seen:
+                    continue
                 seen.add(c["url"])
                 out.append(c)
                 if len(out) >= 25:
@@ -184,6 +240,22 @@ def _scrape_seed_pages(seed_urls):
             continue
     _log(f"seed scrape links={len(out)} from {len(seed_urls or [])} pages")
     return out
+
+
+def _min_chars_for(url: str, force_indonesia: bool) -> int:
+    base = MIN_CONTENT_CHARS_ID if force_indonesia else MIN_CONTENT_CHARS_GLOBAL
+    dom = _domain(url)
+    override = TRUSTED_MIN_OVERRIDES.get(dom)
+    return min(base, override) if override else base
+
+
+def _keep_item(it, force_indonesia: bool) -> bool:
+    url = it.get("url", "")
+    if _is_blacklisted(url):
+        return False
+    text = (it.get("content") or "").strip()
+    return len(text) >= _min_chars_for(url, force_indonesia)
+
 
 def _search_and_retrieve(label: str, query: str, force_indonesia: bool, seeds=None) -> list:
     raw = _perform_search(label, query, SEARCH_MAX_RESULTS)
@@ -198,32 +270,31 @@ def _search_and_retrieve(label: str, query: str, force_indonesia: bool, seeds=No
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         fetched = list(ex.map(_fetch_article, raw))
 
-    kept, dropped = [], 0
-    min_chars = MIN_CONTENT_CHARS_ID if force_indonesia else MIN_CONTENT_CHARS_GLOBAL
+    kept, dropped = [], {}
     for it in fetched:
-        url = it.get("url","")
-        if _is_blacklisted(url):
-            dropped += 1
+        url = it.get("url", "")
+        dom = _domain(url)
+        if not _keep_item(it, force_indonesia):
+            dropped[dom] = dropped.get(dom, 0) + 1
             continue
-        text = (it.get("content") or "").strip()
-        if len(text) < min_chars:
-            dropped += 1
-            continue
-        it["region"] = _detect_region(it.get("headline",""), text, url, force_indonesia)
+        it["region"] = _detect_region(it.get("headline", ""), it.get("content", ""), url, force_indonesia)
         kept.append(it)
 
-    _log(f"{label}: fetched={len(fetched)} kept={len(kept)} dropped={dropped} (min_chars={min_chars})")
+    if dropped:
+        _log(f"{label}: dropped_by_domain={dropped}")
+    _log(f"{label}: fetched={len(fetched)} kept={len(kept)} (min_chars={'ID' if force_indonesia else 'GLB'})")
     return kept
+
 
 def fetch_all_news() -> list:
     # GLOBAL / ASIA pass
-    global_items = _search_and_retrieve("GLOBAL/ASIA", GLOBAL_QUERY, force_indonesia=False)
+    global_items = _search_and_retrieve("GLOBAL/ASIA", GLOBAL_QUERY, force_indonesia=False, seeds=SEED_URLS_GLOBAL)
 
-    # short pause to ensure the Indonesia search appears as a separate API call window
+    # short pause so the Indonesia search shows as a separate API call in logs
     time.sleep(1.0)
 
     # INDONESIA pass (force region + lower threshold + seeds)
-    local_items  = _search_and_retrieve("INDONESIA", LOCAL_QUERY, force_indonesia=True)
+    local_items = _search_and_retrieve("INDONESIA", LOCAL_QUERY, force_indonesia=True, seeds=SEED_URLS_INDONESIA)
 
     all_items = _dedupe(global_items + local_items, MAX_ARTICLES_TOTAL)
     _log(f"TOTAL after dedupe: {len(all_items)} (global/asia={len(global_items)}, indonesia={len(local_items)})")
