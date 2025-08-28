@@ -15,6 +15,9 @@ MAX_PER_BATCH = int(os.getenv("MAX_PER_BATCH", "6"))
 MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "900"))
 SUMMARY_ITEMS_PER_REGION = int(os.getenv("SUMMARY_ITEMS_PER_REGION", "8"))
 THEMES_MAX = int(os.getenv("THEMES_MAX", "3"))
+SEARCH_MAX_RESULTS = 10
+FETCH_TIMEOUT_SEC = 15
+MAX_WORKERS = 6
 
 # Fetch/search
 GLOBAL_QUERY = ("You are a buy-side AI analyst focused on global and asia equities market. Compile high-importance market relevant news in the Global + Asia region within the past 24 hours")
