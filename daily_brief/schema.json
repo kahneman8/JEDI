@@ -1,48 +1,117 @@
 {
-  "date": "YYYY-MM-DD",
-  "market_summaries": {
-    "global": "<Global markets summary>",
-    "asia": "<Asia markets summary>",
-    "indonesia": "<Indonesia markets summary>"
-  },
-  "economic_events": [
-    { "event": "...", "impact": "..." },
-    { "event": "...", "impact": "..." }
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "date",
+    "market_summaries",
+    "economic_events",
+    "news_by_sector",
+    "watchlist_alerts",
+    "emerging_themes",
+    "sentiment_indicators"
   ],
-  "news_by_sector": {
-    "<SectorName>": [
-      {
-        "headline": "...",
-        "source": "...",
-        "url": "https://...",            // Must be a real URL matching the source
-        "region": "Global|Asia|Indonesia", // new: region tag for each item
-        "sentiment": "Positive|Neutral|Negative",
-        "priority":  <number>,           // new: optional priority (e.g. 1=high)
-        "theme": "<theme_name>"          // new: optional linkage to an emerging theme
+  "properties": {
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "market_summaries": {
+      "type": "object",
+      "properties": {
+        "global": { "type": "string" },
+        "asia": { "type": "string" },
+        "indonesia": { "type": "string" }
       },
-      { ... }
-    ],
-    "...": [ ... ]
-  },
-  "watchlist_alerts": [
-    {
-      "alert": "...",
-      "related_topics": ["..."],       // optional: keywords triggering the alert
-      "reference_url": "https://..."   // optional: a source URL from an article if applicable
-    }
-  ],
-  "emerging_themes": [
-    {
-      "theme": "...",
-      "description": "...",
-      "region": "Global|Asia|Indonesia|Mixed", // new: optional primary region(s) of theme 
-      "priority": <number>,                   // new: optional priority for the theme
-      "related_news": ["<headline1>", "<headline2>"] // optional: news headlines or IDs supporting this theme
+      "required": ["global", "asia", "indonesia"],
+      "additionalProperties": false
     },
-    { ... }
-  ],
-  "sentiment_indicators": {
-    "<SectorName>": { "positive": X, "negative": Y, "neutral": Z },
-    "...": { ... }
-  }
+    "economic_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event": { "type": "string" },
+          "impact": { "type": "string" }
+        },
+        "required": ["event", "impact"],
+        "additionalProperties": false
+      }
+    },
+    "news_by_sector": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "headline": { "type": "string", "minLength": 2 },
+              "source": { "type": "string", "minLength": 2 },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^(https?://)(?!.*example\\.com).+"
+              },
+              "region": { "type": "string", "enum": ["Global", "Asia", "Indonesia"] },
+              "sentiment": { "type": "string", "enum": ["Positive", "Negative", "Neutral"] },
+              "priority": { "type": "number" },
+              "theme": { "type": "string" }
+            },
+            "required": ["headline", "source", "url", "region", "sentiment"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "watchlist_alerts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "alert": { "type": "string" },
+          "related_topics": { "type": "array", "items": { "type": "string" } },
+          "reference_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^(https?://)(?!.*example\\.com).+"
+          },
+          "ticker": { "type": "string" },
+          "sector": { "type": "string" },
+          "type": { "type": "string" }
+        },
+        "required": ["alert"],
+        "additionalProperties": false
+      }
+    },
+    "emerging_themes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "theme": { "type": "string" },
+          "description": { "type": "string" },
+          "region": { "type": "string", "enum": ["Global", "Asia", "Indonesia", "Mixed"] },
+          "priority": { "type": "number" },
+          "related_news": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["theme", "description"],
+        "additionalProperties": false
+      }
+    },
+    "sentiment_indicators": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "type": "object",
+          "properties": {
+            "Positive": { "type": "integer" },
+            "Negative": { "type": "integer" },
+            "Neutral": { "type": "integer" }
+          },
+          "required": ["Positive", "Negative", "Neutral"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
 }
