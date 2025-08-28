@@ -12,10 +12,6 @@ from .config import (
 )
 
 # Optional knobs (fallback defaults if not defined in config.py)
-try:
-    from .config import TRUSTED_MIN_OVERRIDES
-except Exception:
-    return ""
 
 def _log(msg: str):
     print(f"[fetch_news] {msg}")
