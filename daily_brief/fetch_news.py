@@ -75,7 +75,7 @@ def perform_search(region_label: str, query: str, max_results: int):
     try:
         # Call OpenAI Responses API with web_search tool
         resp = client.responses.create(
-            model="gpt-4o",  # model supporting tools (could be parameterized)
+            model="gpt-5-mini",  # model supporting tools (could be parameterized)
             input=f"Give {max_results} recent reputable headlines for: {query}",
             tools=[{"type": "web_search"}]
         )
@@ -181,6 +181,11 @@ def deduplicate_items(items: list, max_items: int = None) -> list:
         if max_items and len(unique_items) >= max_items:
             break
     return unique_items
+
+def fetch_all_news() -> list:
+    global_items = _search_and_retrieve("GLOBAL/ASIA", GLOBAL_QUERY, force_indonesia=False)
+    local_items = _search_and_retriev("INDONESIA", LOCAL_QUERY, force_indonesia=True)
+    return all_items
 
 def main():
     # Determine regions and queries from CLI or config
