@@ -78,36 +78,23 @@ def _related_from_support(indices: List[int], idx2item: Dict[int, Dict], max_rel
     return titles
 
 def find_emerging_themes(items: List[Dict], max_themes: int = None) -> List[Dict]:
-    """Return enriched themes: [{theme, description, region, priority, related_news}]"""
     if not items:
         return []
     max_themes = max_themes or THEMES_MAX
 
-    # Build compact, indexed context
-    # Use 1-based indices for user-friendliness
     lines, idx2item = [], {}
     for i, it in enumerate(items, start=1):
         idx2item[i] = it
-        lines.append(f"{i}. [{it.get('region','Global')}] {it.get('headline','')} ({it.get('sector','Unknown')}, {it.get('sentiment','Neutral')})")
+        lines.append(f"{i}. [{it.get('region','Global')}] {it.get('headline','')} "
+                     f"({it.get('sector','Unknown')}, {it.get('sentiment','Neutral')})")
 
     prompt = (
-        "You are an equity research assistant. From the following indexed headlines, propose up to "
-        f"{max_themes} emerging themes that appear across multiple items. "
-        "Use only the provided headlines; do not invent facts or URLs.\n\n"
-        "Return ONLY a JSON object with this schema:\n"
-        "{\n"
-        '  "themes": [\n'
-        '    {\n'
-        '      "theme": "short title",\n'
-        '      "description": "one-sentence explanation",\n'
-        '      "support": [<index>, <index>]   // 2-5 indices from the list that justify the theme\n'
-        "    }\n"
-        "  ]\n"
-        "}\n\n"
-        "Indexed headlines:\n" + "\n".join(lines)
+        "From the indexed headlines below, propose up to "
+        f"{max_themes} themes. Use only these headlines.\n"
+        'Return ONLY JSON: {"themes":[{"theme":"...", "description":"...", "support":[indices]}]}.\n\n'
+        "Headlines:\n" + "\n".join(lines)
     )
 
-    # Try JSON-mode; fallback: basic heuristic if it fails
     try:
         resp = _backoff(
             client.chat.completions.create,
@@ -116,25 +103,33 @@ def find_emerging_themes(items: List[Dict], max_themes: int = None) -> List[Dict
             response_format={"type":"json_object"},
             max_completion_tokens=600,
         )
-        txt = (resp.choices[0].message.content or "").strip()
-        data = json.loads(txt) if txt else {"themes":[]}
-        out = []
-        for t in data.get("themes", []):
-            support = [int(x) for x in t.get("support", []) if isinstance(x, int) and x in idx2item]
-            if not support:
-                continue
-            region = _majority_region(support, idx2item)
-            related = _related_from_support(support, idx2item)
-            priority = 1.0 if len(support) >= 4 else 0.7 if len(support) >= 3 else 0.5
-            out.append({
-                "theme": t.get("theme","").strip()[:140],
-                "description": t.get("description","").strip(),
-                "region": region,
-                "priority": priority,
-                "related_news": related
-            })
-        if out:
-            return out[:max_themes]
+        print(f"[themes] resp_id={getattr(resp,'id',None)} model={MODEL_REASON}")
+        raw = (resp.choices[0].message.content or "").strip()
+        data = json.loads(raw) if raw else {"themes":[]}
+    except Exception as e:
+        print(f"[themes] LLM error: {type(e).__name__}")
+        data = {"themes":[]}
+
+    out = []
+    for t in data.get("themes", []):
+        support = [int(x) for x in t.get("support", []) if isinstance(x, int) and x in idx2item]
+        if len(support) < 2:
+            continue  # must be grounded by >=2 headlines
+        region = _majority_region(support, idx2item)
+        related = _related_from_support(support, idx2item)
+        priority = 1.0 if len(support) >= 4 else 0.7 if len(support) >= 3 else 0.5
+        out.append({
+            "theme": (t.get("theme","") or "").strip()[:140],
+            "description": (t.get("description","") or "").strip(),
+            "region": region,
+            "priority": priority,
+            "related_news": related
+        })
+
+    if out:
+        print(f"[themes] grounded={len(out)}")
+        return out[:max_themes]
+
     except Exception:
         pass
 
