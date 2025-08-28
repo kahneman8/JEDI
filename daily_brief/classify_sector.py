@@ -1,112 +1,68 @@
+"""Batch GICS sector classification with a single model (GPT-5), JSON-mode."""
 import json, time, random, openai
 from openai import OpenAI
-from .config import (
-    OPENAI_API_KEY, MODEL, MAX_PER_BATCH,
-    HEADLINE_ONLY_FOR_UTILITY
-)
+from .config import OPENAI_API_KEY, MODEL, MAX_PER_BATCH, GICS_SECTORS, HEADLINE_ONLY_FOR_UTILITY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Allowed sectors must match the rest of your system
-GICS_SECTORS = {
-    "Energy", "Materials", "Industrials", "Consumer Discretionary",
-    "Consumer Staples", "Health Care", "Financials",
-    "Information Technology", "Communication Services", "Utilities", "Real Estate"
-}
-
-# Strict JSON schema for Responses API
-SECTOR_SCHEMA = {
-    "name": "sector_map",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "mapping": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "i": {"type": "integer"},
-                        "sector": {"type": "string"}
-                    },
-                    "required": ["i", "sector"],
-                    "additionalProperties": False
-                }
-            }
-        },
-        "required": ["mapping"],
-        "additionalProperties": False
-    },
-    "strict": True
-}
-
 def _backoff(call, *args, **kwargs):
-    delay = 0.25
-    for _ in range(6):
+    delay = 0.35
+    for attempt in range(6):
         try:
             return call(*args, **kwargs)
         except openai.RateLimitError:
-            time.sleep(delay + random.uniform(0, 0.2))
+            if attempt == 5: raise
+            time.sleep(delay + random.uniform(0, 0.25))
             delay = min(delay * 2, 6.0)
-        except Exception as e:
-            # Bubble up non-rate errors
-            raise e
-    raise RuntimeError("Rate limit: retries exhausted")
+        except Exception:
+            if attempt == 5: raise
+            time.sleep(delay + random.uniform(0, 0.25))
+            delay = min(delay * 2, 6.0)
 
-def _chunks(n):
-    i = 0
-    while True:
-        yield range(i, min(i + MAX_PER_BATCH, n))
-        i += MAX_PER_BATCH
-        if i >= n:
-            break
+def _batches(indices, size):
+    for i in range(0, len(indices), size):
+        yield indices[i:i+size]
 
 def batch_assign_sector(items: list) -> None:
-    """
-    Assigns sector in-place for items missing 'sector'. Batched Responses API with strict schema.
-    """
-    if not items:
-        return
-
-    # Identify indices to classify
+    if not items: return
     targets = [i for i, it in enumerate(items) if not it.get("sector")]
-    if not targets:
-        return
+    if not targets: return
 
-    # Build valid sector list string for prompt
-    sector_list = ", ".join(sorted(GICS_SECTORS))
+    valid = ", ".join(GICS_SECTORS)
 
-    for grp in _chunks(len(targets)):
-        idxs = [targets[i] for i in grp]
-        if not idxs:
-            break
+    for group in _batches(targets, MAX_PER_BATCH):
+        lines = []
+        for i in group:
+            text = items[i].get("headline","")
+            if not HEADLINE_ONLY_FOR_UTILITY:
+                text += " " + (items[i].get("content","")[:160])
+            lines.append(f"{i+1}. {text}")
 
-        # Headline-only to minimize tokens
-        lines = [f"{i+1}. {items[i].get('headline','')}" for i in idxs]
         prompt = (
-            "Assign one **GICS** sector to each headline.\n"
-            f"Valid sectors: {sector_list}.\n"
-            "Return JSON in {\"mapping\": [{\"i\": <absolute_index>, \"sector\": \"<name>\"}]} "
-            "where <absolute_index> is the original global index (1-based).\n\n" +
-            "\n".join(lines)
+            "Assign exactly one GICS sector to each headline from this set:\n"
+            f"{valid}\n\n"
+            "Return ONLY a JSON object:\n"
+            '{"mapping":[{"i": <absolute_index>, "sector": "<sector>"}]}\n'
+            "Use <absolute_index> as the 1-based index shown before each headline.\n\n"
+            + "\n".join(lines)
         )
 
-        # Call Responses API with strict JSON
         resp = _backoff(
-            client.responses.create,
+            client.chat.completions.create,
             model=MODEL,
-            input=prompt,
-            response_format={"type": "json_schema", "json_schema": SECTOR_SCHEMA}
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_completion_tokens=600,
         )
+        payload = (resp.choices[0].message.content or "").strip()
+        data = json.loads(payload) if payload else {"mapping": []}
 
-        payload = resp.output_text
-        data = json.loads(payload)
-        for m in data["mapping"]:
-            real_idx = int(m["i"]) - 1
-            sec = m["sector"]
-            if 0 <= real_idx < len(items):
-                items[real_idx]["sector"] = sec if sec in GICS_SECTORS else "Unknown"
+        for m in data.get("mapping", []):
+            idx = int(m.get("i", 0)) - 1
+            sec = m.get("sector", "Unknown")
+            if 0 <= idx < len(items):
+                items[idx]["sector"] = sec if sec in GICS_SECTORS else "Unknown"
 
-    # Any remaining unset -> Unknown (no per-item model calls)
     for it in items:
         if not it.get("sector"):
             it["sector"] = "Unknown"
