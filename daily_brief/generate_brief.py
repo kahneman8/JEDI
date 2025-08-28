@@ -1,147 +1,157 @@
-# daily_brief/generate_brief.py
+"""LLM-grounded theme extraction with explicit grounding:
+- Pass only fetched items (indexed) as context.
+- Ask for JSON object: {"themes":[{theme, description, support:[indices]}]}
+- Post-process to attach region/priority/related_news and drop ungrounded themes.
+- Falls back to a simple trending-term heuristic if LLM fails.
 """
-Deterministic compose (no LLM calls):
-- Builds JSON strictly from fetched items (no fabricated URLs)
-- Preserves region tags per item (Global | Asia | Indonesia)
-- Passes through enriched themes/alerts
-- Renders Markdown locally to avoid 429s
-The orchestrator validates the JSON against schema.json.
-"""
+import json, re, time, random
+from collections import Counter
+from typing import List, Dict
+from openai import OpenAI
+from .config import OPENAI_API_KEY, MODEL_REASON, THEMES_MAX
 
-import json
-from urllib.parse import urlparse
+client = OpenAI(api_key=OPENAI_API_KEY)
 
+# --- Optional curated watchlist ---
+try:
+    with open("daily_brief/data/watchlist_curated.json") as f:
+        WATCHLIST_CURATED = json.load(f)
+except Exception:
+    WATCHLIST_CURATED = []
 
-def _host(url: str) -> str:
-    try:
-        h = urlparse(url).netloc.replace("www.", "").split(":")[0]
-        return h or "source"
-    except Exception:
-        return "source"
-
-
-def _fallback_summary(items, label: str) -> str:
-    pos = sum(1 for it in items if it.get("sentiment") == "Positive")
-    neg = sum(1 for it in items if it.get("sentiment") == "Negative")
-    neu = sum(1 for it in items if it.get("sentiment") == "Neutral")
-    return f"{label} headlines: {len(items)} items (Positive {pos}, Negative {neg}, Neutral {neu})."
-
-
-def _partition_by_region(all_items):
-    indo = [it for it in all_items if it.get("region") == "Indonesia"]
-    asia = [it for it in all_items if it.get("region") == "Asia"]
-    glob = [it for it in all_items if it.get("region") == "Global"]
-    return glob, asia, indo
-
-
-def _render_markdown(brief_json: dict) -> str:
-    lines = []
-    lines.append(f"# Morning Market Brief — {brief_json.get('date','')}")
-    lines.append("")
-    ms = brief_json.get("market_summaries", {})
-    lines.append("## Market Summaries")
-    lines.append(f"- **Global:** {ms.get('global','')}")
-    lines.append(f"- **Asia:** {ms.get('asia','')}")
-    lines.append(f"- **Indonesia:** {ms.get('indonesia','')}")
-    lines.append("")
-    lines.append("## Economic Events")
-    evs = brief_json.get("economic_events", []) or []
-    if evs:
-        for e in evs:
-            imp = f" — {e.get('impact','')}" if e.get("impact") else ""
-            lines.append(f"- {e.get('event','')}{imp}")
-    else:
-        lines.append("- None")
-    lines.append("")
-    lines.append("## News by Sector")
-    nbs = brief_json.get("news_by_sector", {}) or {}
-    for sector, items in nbs.items():
-        lines.append(f"### {sector}")
-        if not items:
-            lines.append("- None")
-        else:
-            for it in items:
-                reg = it.get("region", "Global")
-                snt = it.get("sentiment", "Neutral")
-                src = it.get("source", "source")
-                url = it.get("url", "")
-                headline = it.get("headline", "")
-                lines.append(f"- [{reg}] {headline} ({snt}) — [{src}]({url})")
-        lines.append("")
-    lines.append("")
-    lines.append("## Watchlist Alerts")
-    alerts = brief_json.get("watchlist_alerts", []) or []
-    if alerts:
-        for a in alerts:
-            base = a.get("alert", "")
-            ref = a.get("reference_url")
-            if ref:
-                lines.append(f"- {base} — [source]({ref})")
+def check_curated_watchlist(items: List[Dict]) -> List[str]:
+    alerts = []
+    for kw in WATCHLIST_CURATED:
+        kwl = kw.lower()
+        hits = [it for it in items if kwl in (it.get("headline","")+ " " + it.get("content","")).lower()]
+        if hits:
+            url = hits[0].get("url","")
+            if len(hits) == 1:
+                alerts.append(f"{kw}: {hits[0].get('headline','')} ({url})")
             else:
-                lines.append(f"- {base}")
-    else:
-        lines.append("- None")
-    lines.append("")
-    lines.append("## Emerging Themes")
-    themes = brief_json.get("emerging_themes", []) or []
-    if themes:
-        for t in themes:
-            reg = f" [{t.get('region')}]" if t.get("region") else ""
-            lines.append(f"- **{t.get('theme','')}**{reg}: {t.get('description','')}")
-    else:
-        lines.append("- None")
-    lines.append("")
-    return "\n".join(lines)
+                alerts.append(f"{kw}: Mentioned in {len(hits)} stories ({url})")
+    return alerts
 
+def find_dynamic_trends(items: List[Dict], top_n: int = 3) -> List[str]:
+    text = " ".join(it.get("headline","") for it in items)
+    words = re.findall(r"\b[A-Z][a-z]{3,}\b", text)
+    freq = Counter(words)
+    curated = {w.lower() for w in WATCHLIST_CURATED}
+    common = {"The","This","That","Market","Global","Today"}
+    trending = [w for w,c in freq.most_common(12) if c>1 and w.lower() not in curated and w not in common]
+    out = []
+    for term in trending[:top_n]:
+        url = next((it.get("url","") for it in items if term in it.get("headline","")), "")
+        out.append(f"{term}: Trending in news (mentioned {freq[term]} times) ({url})")
+    return out
 
-def compose_and_generate(
-    date: str,
-    market_summaries: dict,
-    economic_events: list,
-    news_by_sector: dict,
-    watchlist_alerts: list,
-    emerging_themes: list,
-    sentiment_indicators: dict,
-) -> tuple:
-    # Flatten all items for summaries
-    all_items = []
-    for items in news_by_sector.values():
-        all_items.extend(items)
+# --- LLM helpers ---
+def _backoff(call, *args, **kwargs):
+    delay = 0.35
+    for attempt in range(6):
+        try:
+            return call(*args, **kwargs)
+        except Exception:
+            if attempt == 5:
+                raise
+            time.sleep(delay + random.uniform(0,0.25))
+            delay = min(delay*2, 6.0)
 
-    # Deterministic summaries (no model)
-    g, a, i = _partition_by_region(all_items)
-    ms = {
-        "global":    (market_summaries or {}).get("global")    or _fallback_summary(g, "Global"),
-        "asia":      (market_summaries or {}).get("asia")      or _fallback_summary(a, "Asia"),
-        "indonesia": (market_summaries or {}).get("indonesia") or _fallback_summary(i, "Indonesia"),
-    }
+def _majority_region(indices: List[int], idx2item: Dict[int, Dict]) -> str:
+    counts = Counter(idx2item.get(i,{}).get("region","Global") for i in indices if i in idx2item)
+    if not counts:
+        return "Mixed"
+    region, _ = counts.most_common(1)[0]
+    return region or "Mixed"
 
-    # Build JSON strictly from fetched items (preserve region & real URLs)
-    brief_json = {
-        "date": date,
-        "market_summaries": ms,
-        "economic_events": economic_events or [],
-        "news_by_sector": {},
-        "watchlist_alerts": watchlist_alerts or [],
-        "emerging_themes": emerging_themes or [],
-        "sentiment_indicators": sentiment_indicators or {},
-    }
+def _related_from_support(indices: List[int], idx2item: Dict[int, Dict], max_related=5) -> List[str]:
+    titles = []
+    for i in indices:
+        it = idx2item.get(i)
+        if not it:
+            continue
+        h = it.get("headline","")
+        if h:
+            titles.append(h)
+        if len(titles) >= max_related:
+            break
+    return titles
 
-    for sector, items in news_by_sector.items():
+def find_emerging_themes(items: List[Dict], max_themes: int = None) -> List[Dict]:
+    """Return enriched themes: [{theme, description, region, priority, related_news}]"""
+    if not items:
+        return []
+    max_themes = max_themes or THEMES_MAX
+
+    # Build compact, indexed context
+    # Use 1-based indices for user-friendliness
+    lines, idx2item = [], {}
+    for i, it in enumerate(items, start=1):
+        idx2item[i] = it
+        lines.append(f"{i}. [{it.get('region','Global')}] {it.get('headline','')} ({it.get('sector','Unknown')}, {it.get('sentiment','Neutral')})")
+
+    prompt = (
+        "You are an equity research assistant. From the following indexed headlines, propose up to "
+        f"{max_themes} emerging themes that appear across multiple items. "
+        "Use only the provided headlines; do not invent facts or URLs.\n\n"
+        "Return ONLY a JSON object with this schema:\n"
+        "{\n"
+        '  "themes": [\n'
+        '    {\n'
+        '      "theme": "short title",\n'
+        '      "description": "one-sentence explanation",\n'
+        '      "support": [<index>, <index>]   // 2-5 indices from the list that justify the theme\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Indexed headlines:\n" + "\n".join(lines)
+    )
+
+    # Try JSON-mode; fallback: basic heuristic if it fails
+    try:
+        resp = _backoff(
+            client.chat.completions.create,
+            model=MODEL_REASON,
+            messages=[{"role":"user","content": prompt}],
+            response_format={"type":"json_object"},
+            max_completion_tokens=600,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        data = json.loads(txt) if txt else {"themes":[]}
         out = []
-        for it in items:
-            url = it.get("url", "")
+        for t in data.get("themes", []):
+            support = [int(x) for x in t.get("support", []) if isinstance(x, int) and x in idx2item]
+            if not support:
+                continue
+            region = _majority_region(support, idx2item)
+            related = _related_from_support(support, idx2item)
+            priority = 1.0 if len(support) >= 4 else 0.7 if len(support) >= 3 else 0.5
             out.append({
-                "headline":  it.get("headline", ""),
-                "source":    it.get("source") or _host(url),
-                "url":       url,
-                "region":    it.get("region", "Global"),
-                "sentiment": it.get("sentiment", "Neutral"),
-                "priority":  it.get("priority", 0),
-                "theme":     it.get("theme", "")
+                "theme": t.get("theme","").strip()[:140],
+                "description": t.get("description","").strip(),
+                "region": region,
+                "priority": priority,
+                "related_news": related
             })
-        brief_json["news_by_sector"][sector] = out
+        if out:
+            return out[:max_themes]
+    except Exception:
+        pass
 
-    # Render Markdown locally
-    brief_md = _render_markdown(brief_json)
-    return brief_json, brief_md
+    # Fallback: trending terms -> themes
+    trends = find_dynamic_trends(items, top_n=max_themes)
+    themes = []
+    for tr in trends:
+        term = tr.split(":")[0]
+        # support by simple containment
+        support_idx = [i for i,it in idx2item.items() if term in it.get("headline","")]
+        region = _majority_region(support_idx, idx2item)
+        related = _related_from_support(support_idx, idx2item)
+        themes.append({
+            "theme": term,
+            "description": f"Multiple headlines reference {term}.",
+            "region": region,
+            "priority": 0.5,
+            "related_news": related
+        })
+    return themes[:max_themes]
