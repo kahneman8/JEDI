@@ -1,7 +1,7 @@
 import os, json, re, time, random, openai
 from openai import OpenAI, NotFoundError
 from urllib.parse import urlparse
-from .config import OPENAI_API_KEY, MODEL_COMPOSE_PREF, MAX_COMPLETION_TOKENS
+from .config import OPENAI_API_KEY, MODEL, MAX_COMPLETION_TOKENS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -125,7 +125,7 @@ def compose_and_generate(
         f"JSON Schema:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
         f"Context JSON:\n{json.dumps(context, ensure_ascii=False)}"
     )
-    brief_json = _chat_json_with_backoff(MODEL_COMPOSE_PREF, sys_json, usr_json, MAX_COMPLETION_TOKENS)
+    brief_json = _chat_json_with_backoff(MODEL, sys_json, usr_json, MAX_COMPLETION_TOKENS)
 
     # ---- Markdown rendered locally (no LLM; zero risk of 429/empty) ----
     brief_md = _render_markdown(brief_json)
