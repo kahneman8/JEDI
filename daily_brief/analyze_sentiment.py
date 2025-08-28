@@ -1,7 +1,7 @@
 """Batch sentiment classification with a single model (GPT-5), JSON-mode."""
 import json, time, random, openai
 from openai import OpenAI
-from .config import OPENAI_API_KEY, MODEL, MAX_PER_BATCH, HEADLINE_ONLY_FOR_UTILITY
+from .config import OPENAI_API_KEY, MODEL_CLASSIFY, MAX_PER_BATCH, HEADLINE_ONLY_FOR_UTILITY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -46,7 +46,7 @@ def batch_assign_sentiment(items: list) -> None:
 
         resp = _backoff(
             client.chat.completions.create,
-            model=MODEL,
+            model=MODEL_CLASSIFY,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_completion_tokens=600,
