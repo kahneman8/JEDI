@@ -1,41 +1,28 @@
-import os, json, re, time, random, openai
-from openai import OpenAI, NotFoundError
+"""
+Deterministic compose: builds JSON from fetched items only (no fabricated URLs),
+adds region to each item, richer theme metadata, and renders Markdown locally.
+"""
+import os, json
 from urllib.parse import urlparse
-from .config import OPENAI_API_KEY, MODEL_COMPOSE_PREF, MAX_COMPLETION_TOKENS
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-def _chat_json_with_backoff(models, system, user, max_tokens):
-    delay = 0.35
-    for _ in range(6):
-        for m in models:
-            try:
-                r = client.chat.completions.create(
-                    model=m,
-                    messages=[{"role":"system","content":system},
-                              {"role":"user","content":user}],
-                    response_format={"type":"json_object"},
-                    max_completion_tokens=max_tokens,
-                )
-                txt = (r.choices[0].message.content or "").strip()
-                if txt:
-                    return json.loads(txt)
-            except openai.RateLimitError:
-                time.sleep(delay + random.uniform(0,0.3))
-            except NotFoundError:
-                continue
-            except Exception:
-                time.sleep(0.2)
-        delay = min(delay * 2, 6.0)
-    raise RuntimeError("Compose JSON failed after retries/fallbacks")
-
-def _hostname(u: str) -> str:
+def _host(url: str) -> str:
     try:
-        host = urlparse(u).netloc
-        host = host.replace("www.", "").split(":")[0]
-        return host or "source"
+        h = urlparse(url).netloc.replace("www.","").split(":")[0]
+        return h or "source"
     except Exception:
         return "source"
+
+def _fallback_summary(items, label):
+    pos = sum(1 for it in items if it.get("sentiment") == "Positive")
+    neg = sum(1 for it in items if it.get("sentiment") == "Negative")
+    neu = sum(1 for it in items if it.get("sentiment") == "Neutral")
+    return f"{label} headlines: {len(items)} items (Positive {pos}, Negative {neg}, Neutral {neu})."
+
+def _partition_by_region(all_items):
+    indo = [it for it in all_items if it.get("region") == "Indonesia"]
+    asia = [it for it in all_items if it.get("region") == "Asia"]
+    glob = [it for it in all_items if it.get("region") == "Global"]
+    return glob, asia, indo
 
 def _render_markdown(brief_json: dict) -> str:
     lines = []
@@ -48,43 +35,47 @@ def _render_markdown(brief_json: dict) -> str:
     lines.append(f"- **Indonesia:** {ms.get('indonesia','')}")
     lines.append("")
     lines.append("## Economic Events")
-    evs = brief_json.get("economic_events", []) or []
+    evs = brief_json.get("economic_events", [])
     if evs:
         for e in evs:
-            t = e.get("event","")
-            imp = e.get("impact")
-            lines.append(f"- {t}" + (f" — {imp}" if imp else ""))
+            imp = f" — {e.get('impact','')}" if e.get("impact") else ""
+            lines.append(f"- {e.get('event','')}{imp}")
     else:
         lines.append("- None")
     lines.append("")
     lines.append("## News by Sector")
-    nbs = brief_json.get("news_by_sector", {}) or {}
-    for sector, items in nbs.items():
+    for sector, items in brief_json.get("news_by_sector", {}).items():
         lines.append(f"### {sector}")
         if not items:
             lines.append("- None")
         else:
             for it in items:
-                h = it.get("headline","")
-                s = it.get("sentiment","")
-                u = it.get("url","")
-                src = it.get("source") or _hostname(u)
-                lines.append(f"- {h} ({s}) — [{src}]({u})")
+                reg = it.get("region","Global")
+                snt = it.get("sentiment","Neutral")
+                src = it.get("source","source")
+                url = it.get("url","")
+                lines.append(f"- [{reg}] {it.get('headline','')} ({snt}) — [{src}]({url})")
         lines.append("")
     lines.append("")
     lines.append("## Watchlist Alerts")
-    alerts = brief_json.get("watchlist_alerts", []) or []
+    alerts = brief_json.get("watchlist_alerts", [])
     if alerts:
         for a in alerts:
-            lines.append(f"- {a}")
+            base = a.get("alert","")
+            ref  = a.get("reference_url")
+            if ref:
+                lines.append(f"- {base} — [source]({ref})")
+            else:
+                lines.append(f"- {base}")
     else:
         lines.append("- None")
     lines.append("")
     lines.append("## Emerging Themes")
-    themes = brief_json.get("emerging_themes", []) or []
+    themes = brief_json.get("emerging_themes", [])
     if themes:
         for t in themes:
-            lines.append(f"- **{t.get('theme','')}**: {t.get('description','')}")
+            reg = f" [{t.get('region')}]" if t.get("region") else ""
+            lines.append(f"- **{t.get('theme','')}**{reg}: {t.get('description','')}")
     else:
         lines.append("- None")
     lines.append("")
@@ -99,35 +90,45 @@ def compose_and_generate(
     emerging_themes: list,
     sentiment_indicators: dict,
 ) -> tuple:
-    schema_path = os.path.join(os.path.dirname(__file__), "schema.json")
-    schema = json.load(open(schema_path))
+    # Flatten all items for summaries and integrity
+    all_items = []
+    for items in news_by_sector.values():
+        all_items.extend(items)
 
-    context = {
-        "date": date,
-        "market_summaries": market_summaries or {},
-        "economic_events": economic_events or [],
-        "news_by_sector": news_by_sector,
-        "watchlist_alerts": watchlist_alerts or [],
-        "emerging_themes": emerging_themes or [],
-        "sentiment_indicators": sentiment_indicators or {},
+    # Market summaries (deterministic, no model)
+    g, a, i = _partition_by_region(all_items)
+    ms = {
+        "global":    market_summaries.get("global")    or _fallback_summary(g, "Global"),
+        "asia":      market_summaries.get("asia")      or _fallback_summary(a, "Asia"),
+        "indonesia": market_summaries.get("indonesia") or _fallback_summary(i, "Indonesia")
     }
 
-    # small pause to ease TPM rollover
-    time.sleep(1.1)
+    # Build JSON strictly from fetched items (no fabricated URLs)
+    brief_json = {
+        "date": date,
+        "market_summaries": ms,
+        "economic_events": economic_events or [],
+        "news_by_sector": {},
+        "watchlist_alerts": watchlist_alerts or [],
+        "emerging_themes": emerging_themes or [],
+        "sentiment_indicators": sentiment_indicators or {}
+    }
 
-    # ---- JSON via Chat JSON-mode with backoff + mini→full fallback ----
-    sys_json = (
-        "You are an equity research assistant. "
-        "Output ONLY one JSON object that STRICTLY matches the provided JSON Schema. "
-        "No prose, no markdown."
-    )
-    usr_json = (
-        f"JSON Schema:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
-        f"Context JSON:\n{json.dumps(context, ensure_ascii=False)}"
-    )
-    brief_json = _chat_json_with_backoff(MODEL_COMPOSE_PREF, sys_json, usr_json, MAX_COMPLETION_TOKENS)
+    for sector, items in news_by_sector.items():
+        out = []
+        for it in items:
+            url = it.get("url","")
+            out.append({
+                "headline":  it.get("headline",""),
+                "source":    it.get("source") or _host(url),
+                "url":       url,
+                "region":    it.get("region","Global"),
+                "sentiment": it.get("sentiment","Neutral"),
+                "priority":  it.get("priority", 0),
+                "theme":     it.get("theme","")
+            })
+        brief_json["news_by_sector"][sector] = out
 
-    # ---- Markdown rendered locally (no LLM; zero risk of 429/empty) ----
+    # Local Markdown
     brief_md = _render_markdown(brief_json)
-
     return brief_json, brief_md
