@@ -1,95 +1,65 @@
+"""Batch sentiment classification with a single model (GPT-5), JSON-mode."""
 import json, time, random, openai
 from openai import OpenAI
-from .config import OPENAI_API_KEY, MODEL, MAX_PER_BATCH
+from .config import OPENAI_API_KEY, MODEL, MAX_PER_BATCH, HEADLINE_ONLY_FOR_UTILITY
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-SENT_SCHEMA = {
-    "name": "sent_map",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "mapping": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "i": {"type": "integer"},
-                        "sentiment": {
-                            "type": "string",
-                            "enum": ["Positive", "Negative", "Neutral"]
-                        }
-                    },
-                    "required": ["i", "sentiment"],
-                    "additionalProperties": False
-                }
-            }
-        },
-        "required": ["mapping"],
-        "additionalProperties": False
-    },
-    "strict": True
-}
-
 def _backoff(call, *args, **kwargs):
-    delay = 0.25
-    for _ in range(6):
+    delay = 0.35
+    for attempt in range(6):
         try:
             return call(*args, **kwargs)
         except openai.RateLimitError:
-            time.sleep(delay + random.uniform(0, 0.2))
+            if attempt == 5: raise
+            time.sleep(delay + random.uniform(0, 0.25))
             delay = min(delay * 2, 6.0)
-        except Exception as e:
-            raise e
-    raise RuntimeError("Rate limit: retries exhausted")
+        except Exception:
+            if attempt == 5: raise
+            time.sleep(delay + random.uniform(0, 0.25))
+            delay = min(delay * 2, 6.0)
 
-def _chunks(n):
-    i = 0
-    while True:
-        yield range(i, min(i + MAX_PER_BATCH, n))
-        i += MAX_PER_BATCH
-        if i >= n:
-            break
+def _batches(indices, size):
+    for i in range(0, len(indices), size):
+        yield indices[i:i+size]
 
 def batch_assign_sentiment(items: list) -> None:
-    """
-    Assigns sentiment in-place for items missing 'sentiment'. Batched Responses API with strict schema.
-    """
-    if not items:
-        return
-
+    if not items: return
     targets = [i for i, it in enumerate(items) if not it.get("sentiment")]
-    if not targets:
-        return
+    if not targets: return
 
-    for grp in _chunks(len(targets)):
-        idxs = [targets[i] for i in grp]
-        if not idxs:
-            break
+    for group in _batches(targets, MAX_PER_BATCH):
+        lines = []
+        for i in group:
+            text = items[i].get("headline","")
+            if not HEADLINE_ONLY_FOR_UTILITY:
+                text += " " + (items[i].get("content","")[:160])
+            lines.append(f"{i+1}. {text}")
 
-        lines = [f"{i+1}. {items[i].get('headline','')}" for i in idxs]
         prompt = (
-            "For each headline, label sentiment strictly as one of: Positive, Negative, Neutral.\n"
-            "Return JSON {\"mapping\": [{\"i\": <absolute_index>, \"sentiment\": \"Positive|Negative|Neutral\"}]} "
-            "where <absolute_index> is the original global index (1-based).\n\n" +
-            "\n".join(lines)
+            "For each headline, assign sentiment strictly as one of: Positive, Negative, Neutral.\n"
+            "Return ONLY a JSON object:\n"
+            '{"mapping":[{"i": <absolute_index>, "sentiment": "Positive|Negative|Neutral"}]}\n'
+            "Use <absolute_index> as the 1-based index shown before each headline.\n\n"
+            + "\n".join(lines)
         )
 
         resp = _backoff(
-            client.responses.create,
+            client.chat.completions.create,
             model=MODEL,
-            input=prompt,
-            response_format={"type": "json_schema", "json_schema": SENT_SCHEMA}
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_completion_tokens=600,
         )
+        payload = (resp.choices[0].message.content or "").strip()
+        data = json.loads(payload) if payload else {"mapping": []}
 
-        payload = resp.output_text
-        data = json.loads(payload)
-        for m in data["mapping"]:
-            real_idx = int(m["i"]) - 1
-            if 0 <= real_idx < len(items):
-                items[real_idx]["sentiment"] = m["sentiment"]
+        for m in data.get("mapping", []):
+            idx = int(m.get("i", 0)) - 1
+            lab = (m.get("sentiment","Neutral") or "Neutral").capitalize()
+            if 0 <= idx < len(items):
+                items[idx]["sentiment"] = lab if lab in {"Positive","Negative","Neutral"} else "Neutral"
 
-    # Default any missing to Neutral (no per-item model calls)
     for it in items:
         if not it.get("sentiment"):
             it["sentiment"] = "Neutral"
