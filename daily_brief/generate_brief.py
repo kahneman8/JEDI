@@ -1,19 +1,55 @@
-import os, json, re, time, random
-from openai import OpenAI
-from .config import OPENAI_API_KEY, MODEL, MAX_COMPLETION_TOKENS
+import os, json, re, time, random, openai
+from openai import OpenAI, NotFoundError
+from .config import OPENAI_API_KEY, MODEL_COMPOSE_PREF, MAX_COMPLETION_TOKENS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def _extract_first_json(text: str) -> str:
-    if not text or not text.strip():
-        raise ValueError("Empty model output")
-    m = re.search(r"```json\s*(\{.*?\})\s*```", text, flags=re.S)
-    if m:
-        return m.group(1)
-    s, e = text.find("{"), text.rfind("}")
-    if s != -1 and e != -1:
-        return text[s:e+1]
-    raise ValueError("No JSON found")
+def _chat_json_with_backoff(models, system, user, max_tokens):
+    delay = 0.35
+    for _ in range(6):                         # retries
+        for m in models:
+            try:
+                r = client.chat.completions.create(
+                    model=m,
+                    messages=[{"role":"system","content":system},
+                              {"role":"user","content":user}],
+                    response_format={"type":"json_object"},
+                    max_completion_tokens=max_tokens,
+                )
+                txt = (r.choices[0].message.content or "").strip()
+                if txt:
+                    return json.loads(txt)
+            except openai.RateLimitError:
+                time.sleep(delay + random.uniform(0,0.3))
+            except NotFoundError:
+                continue
+            except Exception:
+                time.sleep(0.2)
+        delay = min(delay * 2, 6.0)
+    raise RuntimeError("Compose JSON failed after retries/fallbacks")
+
+def _chat_text_with_backoff(models, system, user, max_tokens):
+    delay = 0.35
+    for _ in range(6):
+        for m in models:
+            try:
+                r = client.chat.completions.create(
+                    model=m,
+                    messages=[{"role":"system","content":system},
+                              {"role":"user","content":user}],
+                    max_completion_tokens=max_tokens,
+                )
+                txt = (r.choices[0].message.content or "").strip()
+                if txt:
+                    return txt
+            except openai.RateLimitError:
+                time.sleep(delay + random.uniform(0,0.3))
+            except NotFoundError:
+                continue
+            except Exception:
+                time.sleep(0.2)
+        delay = min(delay * 2, 6.0)
+    raise RuntimeError("Compose Markdown failed after retries/fallbacks")
 
 def compose_and_generate(
     date: str,
@@ -32,111 +68,35 @@ def compose_and_generate(
         "market_summaries": market_summaries or {},
         "economic_events": economic_events or [],
         "news_by_sector": news_by_sector,
-        "watchlist_alerts": watchlist_alerts,
-        "emerging_themes": emerging_themes,
-        "sentiment_indicators": sentiment_indicators,
+        "watchlist_alerts": watchlist_alerts or [],
+        "emerging_themes": emerging_themes or [],
+        "sentiment_indicators": sentiment_indicators or {},
     }
 
-    # JSON via Chat JSON-mode; fallback to extractor if needed
-    system_json = (
+    # Small pause to let TPM window roll over if classification/sentiment just ran
+    time.sleep(1.1)
+
+    # ---- JSON ----
+    sys_json = (
         "You are an equity research assistant. "
-        "Output ONLY a single JSON object that STRICTLY matches the provided JSON Schema. "
-        "No prose, no markdown. Keep URLs intact."
+        "Output ONLY one JSON object that STRICTLY matches the provided JSON Schema. "
+        "No prose, no markdown."
     )
-    user_json = (
+    usr_json = (
         f"JSON Schema:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
         f"Context JSON:\n{json.dumps(context, ensure_ascii=False)}"
     )
+    brief_json = _chat_json_with_backoff(MODEL_COMPOSE_PREF, sys_json, usr_json, MAX_COMPLETION_TOKENS)
 
-    try:
-        r_json = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role":"system","content": system_json},
-                      {"role":"user","content": user_json}],
-            response_format={"type":"json_object"},
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-        )
-        out_json_text = (r_json.choices[0].message.content or "").strip()
-        brief_json = json.loads(out_json_text)
-    except Exception:
-        # fallback: try to parse first JSON object without JSON mode
-        r_json = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role":"system","content": system_json},
-                      {"role":"user","content": user_json}],
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-        )
-        raw = (r_json.choices[0].message.content or "").strip()
-        brief_json = json.loads(_extract_first_json(raw))
-
-    # Markdown formatting (model); fallback to code formatting if empty
-    system_md = (
-        "Format the following Morning Brief JSON into a clean Markdown report:\n"
+    # ---- Markdown ----
+    sys_md = (
+        "Format the following Morning Brief JSON into clean Markdown:\n"
         " - Title with date\n"
-        " - Headings for Market Summaries, Economic Events, News by Sector, Watchlist Alerts, Emerging Themes\n"
-        " - Bulleted items; include source URLs at the end of each bullet as citations\n"
-        " - Output Markdown only (no JSON)."
+        " - Headings: Market Summaries, Economic Events, News by Sector, Watchlist Alerts, Emerging Themes\n"
+        " - Bulleted items; include source URLs at end of each bullet\n"
+        " - Output Markdown only."
     )
-    user_md = json.dumps(brief_json, ensure_ascii=False)
-
-    try:
-        r_md = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role":"system","content": system_md},
-                      {"role":"user","content": user_md}],
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-        )
-        brief_md = (r_md.choices[0].message.content or "").strip()
-        if not brief_md:
-            raise ValueError("empty md")
-    except Exception:
-        # deterministic Markdown fallback
-        lines = []
-        lines.append(f"# Morning Market Brief — {brief_json.get('date','')}")
-        lines.append("")
-        ms = brief_json.get("market_summaries", {})
-        lines.append("## Market Summaries")
-        lines.append(f"- **Global:** {ms.get('global','')}")
-        lines.append(f"- **Asia:** {ms.get('asia','')}")
-        lines.append(f"- **Indonesia:** {ms.get('indonesia','')}")
-        lines.append("")
-        lines.append("## Economic Events")
-        evs = brief_json.get("economic_events", [])
-        if evs:
-            for e in evs:
-                t = e.get("event","")
-                if e.get("impact"):
-                    t += f" — {e['impact']}"
-                lines.append(f"- {t}")
-        else:
-            lines.append("- None")
-        lines.append("")
-        lines.append("## News by Sector")
-        for sector, items in (brief_json.get("news_by_sector") or {}).items():
-            lines.append(f"### {sector}")
-            if not items:
-                lines.append("- None")
-            else:
-                for it in items:
-                    lines.append(f"- {it.get('headline','')} ({it.get('sentiment','')}) — [{it.get('source','source')}]({it.get('url','')})")
-            lines.append("")
-        lines.append("")
-        lines.append("## Watchlist Alerts")
-        alerts = brief_json.get("watchlist_alerts", [])
-        if alerts:
-            for a in alerts:
-                lines.append(f"- {a}")
-        else:
-            lines.append("- None")
-        lines.append("")
-        lines.append("## Emerging Themes")
-        themes = brief_json.get("emerging_themes", [])
-        if themes:
-            for t in themes:
-                lines.append(f"- **{t.get('theme','')}**: {t.get('description','')}")
-        else:
-            lines.append("- None")
-        lines.append("")
-        brief_md = "\n".join(lines)
+    usr_md = json.dumps(brief_json, ensure_ascii=False)
+    brief_md = _chat_text_with_backoff(MODEL_COMPOSE_PREF, sys_md, usr_md, MAX_COMPLETION_TOKENS)
 
     return brief_json, brief_md
