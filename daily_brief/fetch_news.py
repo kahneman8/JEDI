@@ -14,21 +14,6 @@ from .config import (
 # Optional knobs (fallback defaults if not defined in config.py)
 try:
     from .config import TRUSTED_MIN_OVERRIDES
-except Exception:
-    TRUSTED_MIN_OVERRIDES = {
-        "reuters.com": 40,
-        "apnews.com":  40,
-        "ft.com":      40,
-        "scmp.com":    40,
-        "bloomberg.com": 50,
-        "cnbc.com":    50,
-        "nikkei.com":  50,
-    }
-try:
-    from .config import SEED_URLS_GLOBAL, SEED_URLS_INDONESIA
-except Exception:
-    SEED_URLS_GLOBAL = []
-    SEED_URLS_INDONESIA = []
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
