@@ -268,13 +268,13 @@ def _search_and_retrieve(label: str, query: str, force_indonesia: bool, seeds=No
 
 def fetch_all_news() -> list:
     # GLOBAL / ASIA pass
-    global_items = _search_and_retrieve("GLOBAL/ASIA", GLOBAL_QUERY, force_indonesia=False, seeds=SEED_URLS_GLOBAL)
+    global_items = _search_and_retrieve("GLOBAL/ASIA", GLOBAL_QUERY, force_indonesia=False)
 
     # short pause so the Indonesia search shows as a separate API call in logs
     time.sleep(1.0)
 
     # INDONESIA pass (force region + lower threshold + seeds)
-    local_items = _search_and_retrieve("INDONESIA", LOCAL_QUERY, force_indonesia=True, seeds=SEED_URLS_INDONESIA)
+    local_items = _search_and_retrieve("INDONESIA", LOCAL_QUERY, force_indonesia=True)
 
     all_items = _dedupe(global_items + local_items, MAX_ARTICLES_TOTAL)
     _log(f"TOTAL after dedupe: {len(all_items)} (global/asia={len(global_items)}, indonesia={len(local_items)})")
