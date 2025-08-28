@@ -17,9 +17,9 @@ SUMMARY_ITEMS_PER_REGION = int(os.getenv("SUMMARY_ITEMS_PER_REGION", "8"))
 THEMES_MAX = int(os.getenv("THEMES_MAX", "3"))
 
 # Fetch/search
-GLOBAL_QUERY = ('You're a buy-side AI analyst focused on global and asia equities market. Compile high-importance market relevant news in the Global + Asia region within the past 24 hours')
+GLOBAL_QUERY = ("You are a buy-side AI analyst focused on global and asia equities market. Compile high-importance market relevant news in the Global + Asia region within the past 24 hours")
 # Strong Indonesia hint (English + Bahasa + outlet hints given to the web_search tool)
-LOCAL_QUERY  = ('You're a buy-side AI analyst focused on the Indonesian market. Compile high-importance market relevant news in the Indonesia region within the past 24 hours')
+LOCAL_QUERY  = ("You are a buy-side AI analyst focused on the Indonesian market. Compile high-importance market relevant news in the Indonesia region within the past 24 hours")
 # Behavior
 HEADLINE_ONLY_FOR_UTILITY = True
 CACHE_PATH = "outputs/model_cache.json"
